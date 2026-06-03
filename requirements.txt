@@ -1,0 +1,11 @@
+# FinPulse — Python dependencies
+# Install with:  pip install -r requirements.txt
+
+fastapi>=0.110        # API layer
+uvicorn[standard]>=0.29  # ASGI server to run FastAPI
+pandas>=2.0           # time-series aggregation & alignment
+yfinance>=0.2.40      # real price data
+vaderSentiment>=3.3.2 # sentiment analysis (works out of the box)
+dash>=2.16            # interactive dashboard
+plotly>=5.20          # charts used by Dash
+requests>=2.31        # dashboard -> API calls
