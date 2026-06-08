@@ -9,6 +9,8 @@ Reads directly from the aggregator + storage layers (could equally hit the API).
 Run from the repo root:  python -m finpulse.dashboard.app   ->  http://127.0.0.1:8050
 """
 
+from urllib.parse import parse_qs
+
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
@@ -21,13 +23,16 @@ from finpulse.sentiment.ticker_tagger import ALIASES
 
 TICKERS = sorted(set(ALIASES.values()))
 
-# Candle/bucket size (daily is the finest meaningful bucket — news isn't intraday).
-INTERVALS = {
-    "Daily": {"window": "1D", "interval": "1d"},
-    "Weekly": {"window": "1W", "interval": "1wk"},
+# One self-contained timeframe per option: candle size + a sensible lookback baked in.
+# (Daily is the finest meaningful bucket — news isn't intraday.)
+TIMEFRAMES = {
+    "Daily": {"window": "1D", "interval": "1d", "period": "1mo"},
+    "Weekly": {"window": "1W", "interval": "1wk", "period": "1y"},
+    "1 Month": {"window": "1D", "interval": "1d", "period": "1mo"},
+    "3 Months": {"window": "1D", "interval": "1d", "period": "3mo"},
+    "6 Months": {"window": "1D", "interval": "1d", "period": "6mo"},
+    "1 Year": {"window": "1D", "interval": "1d", "period": "1y"},
 }
-# How far back to look.
-RANGES = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y"}
 
 # ----------------------------------------------------------------------------- theme
 BG = "#0e1117"
@@ -129,12 +134,15 @@ def home_page():
         else:
             price_rows = [html.Div("price n/a", style={"color": MUTED})]
         scolor = GREEN if s["mean"] > 0.05 else RED if s["mean"] < -0.05 else MUTED
-        cards.append(html.Div([
+        card = html.Div([
             html.Div(t, style={"fontSize": "18px", "fontWeight": "700"}),
             *price_rows,
             html.Div(f"sentiment {s['mean']:+.2f}",
                      style={"fontSize": "12px", "color": scolor, "marginTop": "8px"}),
-        ], style=CARD_STYLE))
+        ], style=CARD_STYLE)
+        cards.append(dcc.Link(card, href=f"/analytics?ticker={t}",
+                              style={"textDecoration": "none", "color": "inherit",
+                                     "flex": "1", "minWidth": "150px"}))
 
     top = headlines_df().head(8)
     news_items = []
@@ -155,28 +163,24 @@ def home_page():
     ])
 
 
-def analytics_page():
+def analytics_page(default_ticker=None):
+    ticker_value = default_ticker if default_ticker in TICKERS else TICKERS[0]
     return html.Div([
         html.H2("Analytics"),
         html.P("Sentiment vs. price — aligned on the same time axis.", style={"color": MUTED}),
         html.Div([
             dcc.Dropdown(
                 id="ticker-dropdown", options=[{"label": t, "value": t} for t in TICKERS],
-                value=TICKERS[0], clearable=False,
+                value=ticker_value, clearable=False,
                 style={"width": "180px", "color": "#000"},
             ),
             dcc.Dropdown(
-                id="interval-dropdown", options=[{"label": k, "value": k} for k in INTERVALS],
+                id="timeframe-dropdown", options=[{"label": k, "value": k} for k in TIMEFRAMES],
                 value="Daily", clearable=False,
-                style={"width": "130px", "color": "#000"},
-            ),
-            dcc.Dropdown(
-                id="range-dropdown", options=[{"label": k, "value": k} for k in RANGES],
-                value="3M", clearable=False,
-                style={"width": "110px", "color": "#000"},
+                style={"width": "140px", "color": "#000"},
             ),
         ], style={"display": "flex", "gap": "12px", "marginBottom": "10px"}),
-        html.P("Interval = candle size · Range = how far back. Auto-refreshes every 60s. "
+        html.P("Choose a timeframe. Auto-refreshes every 60s. "
                "Drag across either panel to pan/zoom; double-click to reset.",
                style={"color": MUTED, "fontSize": "12px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
@@ -210,10 +214,18 @@ def news_page():
 
 
 # ----------------------------------------------------------------------------- routing
-@app.callback(Output("page", "children"), Input("url", "pathname"))
-def render(pathname):
+def _ticker_from_search(search):
+    if search:
+        vals = parse_qs(search.lstrip("?")).get("ticker")
+        if vals and vals[0] in TICKERS:
+            return vals[0]
+    return TICKERS[0]
+
+
+@app.callback(Output("page", "children"), Input("url", "pathname"), Input("url", "search"))
+def render(pathname, search):
     if pathname == "/analytics":
-        return analytics_page()
+        return analytics_page(_ticker_from_search(search))
     if pathname == "/news":
         return news_page()
     return home_page()
@@ -223,16 +235,14 @@ def render(pathname):
 @app.callback(
     Output("combined-graph", "figure"),
     Input("ticker-dropdown", "value"),
-    Input("interval-dropdown", "value"),
-    Input("range-dropdown", "value"),
+    Input("timeframe-dropdown", "value"),
     Input("tick", "n_intervals"),       # fires every 60s -> re-pull + redraw
 )
-def update_charts(ticker, interval_label, range_label, _tick):
-    iv = INTERVALS[interval_label]
-    period = RANGES[range_label]
-    sent = aggregate_sentiment(ticker, iv["window"])
-    ohlc = load_ohlc(ticker, period=period, interval=iv["interval"])
-    sent = sent[sent.index >= ohlc.index.min()]    # trim sentiment to the selected lookback
+def update_charts(ticker, timeframe, _tick):
+    tf = TIMEFRAMES[timeframe]
+    sent = aggregate_sentiment(ticker, tf["window"])
+    ohlc = load_ohlc(ticker, period=tf["period"], interval=tf["interval"])
+    sent = sent[sent.index >= ohlc.index.min()]    # trim sentiment to the timeframe
 
     # two stacked panels sharing ONE x-axis -> zoom/pan syncs and they always align
     fig = make_subplots(
@@ -260,4 +270,6 @@ def update_charts(ticker, interval_label, range_label, _tick):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8050)
+    # use_reloader=False avoids the Windows "WinError 10038 (not a socket)" spam
+    # from Werkzeug's file-watcher. Restart manually after code edits.
+    app.run(debug=True, use_reloader=False, port=8050)
