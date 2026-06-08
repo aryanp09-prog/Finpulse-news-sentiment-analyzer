@@ -18,7 +18,7 @@ from plotly.subplots import make_subplots
 from dash import Dash, dcc, html, dash_table, Input, Output
 
 from finpulse.storage.db import fetch_all
-from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc
+from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence
 from finpulse.sentiment.ticker_tagger import ALIASES
 
 TICKERS = sorted(set(ALIASES.values()))
@@ -43,6 +43,7 @@ MUTED = "#8b949e"
 GREEN = "#3fb950"
 RED = "#f85149"
 ACCENT = "#58a6ff"
+AMBER = "#d29922"
 
 CARD_STYLE = {
     "background": PANEL, "border": f"1px solid {BORDER}", "borderRadius": "12px",
@@ -134,11 +135,20 @@ def home_page():
         else:
             price_rows = [html.Div("price n/a", style={"color": MUTED})]
         scolor = GREEN if s["mean"] > 0.05 else RED if s["mean"] < -0.05 else MUTED
+        div = detect_divergence(s["mean"], pc["pct"]) if pc else None
+        badge = []
+        if div:
+            badge = [html.Div(f"⚠ {div}", style={
+                "fontSize": "11px", "color": AMBER, "fontWeight": "700", "marginTop": "8px",
+                "border": f"1px solid {AMBER}", "borderRadius": "6px", "padding": "3px 6px",
+                "display": "inline-block",
+            })]
         card = html.Div([
             html.Div(t, style={"fontSize": "18px", "fontWeight": "700"}),
             *price_rows,
             html.Div(f"sentiment {s['mean']:+.2f}",
                      style={"fontSize": "12px", "color": scolor, "marginTop": "8px"}),
+            *badge,
         ], style=CARD_STYLE)
         cards.append(dcc.Link(card, href=f"/analytics?ticker={t}",
                               style={"textDecoration": "none", "color": "inherit",

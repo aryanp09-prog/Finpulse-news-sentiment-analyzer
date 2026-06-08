@@ -35,6 +35,19 @@ def align(ticker):
     return pd.concat([sentiment, price], axis=1, join="inner")
 
 
+def detect_divergence(sentiment, price_change_pct, sent_threshold=0.1, price_threshold=0.5):
+    """Flag when news sentiment and price point in OPPOSITE directions.
+
+    Returns a short description string if divergent, else None.
+    Pure logic (no I/O) so it's easy to test and reuse.
+    """
+    if sentiment > sent_threshold and price_change_pct < -price_threshold:
+        return "News positive, price falling"
+    if sentiment < -sent_threshold and price_change_pct > price_threshold:
+        return "News negative, price rising"
+    return None
+
+
 def load_ohlc(ticker, period="1mo", interval="1d"):
     """Open/High/Low/Close/Volume for a ticker (for candlestick charts)."""
     yf.set_tz_cache_location("D:/yf_cache")
