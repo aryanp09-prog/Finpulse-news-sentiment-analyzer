@@ -31,5 +31,17 @@ def load_price(ticker, period = "1mo"):
 
 def align(ticker):
     sentiment = aggregate_sentiment(ticker, "1D")["mean"].rename("sentiment")
-    price = load_price(ticker)                                    
-    return pd.concat([sentiment, price], axis=1, join="inner")    
+    price = load_price(ticker)
+    return pd.concat([sentiment, price], axis=1, join="inner")
+
+
+def load_ohlc(ticker, period="1mo", interval="1d"):
+    """Open/High/Low/Close/Volume for a ticker (for candlestick charts)."""
+    yf.set_tz_cache_location("D:/yf_cache")
+    df = yf.download(ticker, period=period, interval=interval)
+    ohlc = df.xs(ticker, axis=1, level=1)          # drop the ticker level -> Open/High/Low/Close/Volume
+    if ohlc.index.tz is None:
+        ohlc.index = ohlc.index.tz_localize("UTC")   # daily bars come back tz-naive
+    else:
+        ohlc.index = ohlc.index.tz_convert("UTC")    # intraday bars come back tz-aware
+    return ohlc
