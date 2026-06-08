@@ -176,9 +176,11 @@ def analytics_page():
                 style={"width": "110px", "color": "#000"},
             ),
         ], style={"display": "flex", "gap": "12px", "marginBottom": "10px"}),
-        html.P("Interval = candle size · Range = how far back. Drag across either panel to pan/zoom; double-click to reset.",
+        html.P("Interval = candle size · Range = how far back. Auto-refreshes every 60s. "
+               "Drag across either panel to pan/zoom; double-click to reset.",
                style={"color": MUTED, "fontSize": "12px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
+        dcc.Interval(id="tick", interval=60_000, n_intervals=0),   # redraw every 60 seconds
     ])
 
 
@@ -223,8 +225,9 @@ def render(pathname):
     Input("ticker-dropdown", "value"),
     Input("interval-dropdown", "value"),
     Input("range-dropdown", "value"),
+    Input("tick", "n_intervals"),       # fires every 60s -> re-pull + redraw
 )
-def update_charts(ticker, interval_label, range_label):
+def update_charts(ticker, interval_label, range_label, _tick):
     iv = INTERVALS[interval_label]
     period = RANGES[range_label]
     sent = aggregate_sentiment(ticker, iv["window"])
