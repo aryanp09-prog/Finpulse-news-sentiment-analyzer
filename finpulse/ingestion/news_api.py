@@ -45,5 +45,6 @@ def fetch_headlines(query, limit=20):
             "text": a["title"],
             "source": (a.get("source") or {}).get("name", "unknown"),
             "timestamp": a["publishedAt"],         # ISO 8601, e.g. 2026-06-08T12:30:00Z
+            "url": a.get("url"),                   # link to the original article
         })
     return out

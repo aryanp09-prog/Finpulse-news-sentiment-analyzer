@@ -53,7 +53,7 @@ CARD_STYLE = {
 
 # ----------------------------------------------------------------------------- data helpers
 def headlines_df():
-    cols = ["id", "text", "ticker", "score", "label", "timestamp"]
+    cols = ["id", "text", "ticker", "score", "label", "timestamp", "url"]
     df = pd.DataFrame(fetch_all(), columns=cols)
     if df.empty:
         return df
@@ -158,11 +158,14 @@ def home_page():
     news_items = []
     for _, r in top.iterrows():
         color = GREEN if r["label"] == "positive" else RED if r["label"] == "negative" else MUTED
-        news_items.append(html.Div([
+        row = html.Div([
             html.Span(r["ticker"], style={"color": ACCENT, "fontWeight": "700", "marginRight": "10px"}),
             html.Span(r["text"]),
             html.Span(r["label"].capitalize(), style={"color": color, "float": "right", "fontWeight": "700"}),
-        ], style={"padding": "12px 0", "borderBottom": f"1px solid {BORDER}"}))
+        ], style={"padding": "12px 0", "borderBottom": f"1px solid {BORDER}"})
+        href = r["url"] if r["url"] else "#"
+        news_items.append(html.A(row, href=href, target="_blank",
+                                 style={"textDecoration": "none", "color": "inherit", "cursor": "pointer"}))
 
     return html.Div([
         html.H2("Market Overview"),
@@ -204,12 +207,24 @@ def news_page():
         df = df.copy()
         df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
         df["score"] = df["score"].round(3)
+        df["text"] = df.apply(
+            lambda r: f"[{str(r['text']).replace('[', '(').replace(']', ')')}]({r['url']})"
+            if r["url"] else str(r["text"]),
+            axis=1,
+        )
     return html.Div([
         html.H2("All News"),
         html.P(f"{len(df)} processed headlines.", style={"color": MUTED}),
         dash_table.DataTable(
             data=df[["timestamp", "ticker", "label", "score", "text"]].to_dict("records") if not df.empty else [],
-            columns=[{"name": c.title(), "id": c} for c in ["timestamp", "ticker", "label", "score", "text"]],
+            columns=[
+                {"name": "Timestamp", "id": "timestamp"},
+                {"name": "Ticker", "id": "ticker"},
+                {"name": "Label", "id": "label"},
+                {"name": "Score", "id": "score"},
+                {"name": "Headline", "id": "text", "presentation": "markdown"},
+            ],
+            markdown_options={"link_target": "_blank"},
             page_size=20, sort_action="native", filter_action="native",
             style_table={"overflowX": "auto"},
             style_header={"background": PANEL, "color": TEXT, "fontWeight": "700", "border": f"1px solid {BORDER}"},

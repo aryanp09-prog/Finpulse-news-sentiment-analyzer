@@ -30,7 +30,7 @@ def headlines(ticker : str| None = None, limit: int = 50):
     if ticker:
         rows = [r for r in rows if  r[2] == ticker]
     rows = rows[-limit:]
-    keys = ["id", "text", "ticker", "score" , "label", "timestamp"]
+    keys = ["id", "text", "ticker", "score", "label", "timestamp", "url"]
     return [dict(zip(keys, r)) for r in rows]
 
 @app.get("/snapshot")

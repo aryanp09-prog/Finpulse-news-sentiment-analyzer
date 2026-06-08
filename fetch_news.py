@@ -24,7 +24,7 @@ def ingest(per_company=20):
         for h in headlines:
             s = score(h["text"])
             lab = label(h["text"])
-            insert_headline(h["text"], ticker, s, lab, h["timestamp"])
+            insert_headline(h["text"], ticker, s, lab, h["timestamp"], url=h.get("url"))
             total += 1
         print(f"{ticker}: stored {len(headlines)} real headlines")
     print(f"--- ingested {total} real headlines total ---")

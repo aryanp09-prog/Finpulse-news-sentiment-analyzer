@@ -11,17 +11,18 @@ def init_db():
             ticker    TEXT NOT NULL,
             score     REAL NOT NULL,
             label     TEXT NOT NULL,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            url       TEXT
         )
                     """)
     conn.commit()
     conn.close()
 
-def insert_headline(text,ticker,score,label,timestamp):
+def insert_headline(text, ticker, score, label, timestamp, url=None):
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
-        "INSERT INTO headlines (text, ticker, score, label, timestamp) VALUES (?, ?, ?, ?, ?)",
-        (text, ticker, score, label, timestamp),
+        "INSERT INTO headlines (text, ticker, score, label, timestamp, url) VALUES (?, ?, ?, ?, ?, ?)",
+        (text, ticker, score, label, timestamp, url),
     )
     conn.commit()
     conn.close()
@@ -29,5 +30,5 @@ def insert_headline(text,ticker,score,label,timestamp):
 def fetch_all():
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute("SELECT * FROM headlines ORDER by id").fetchall()
-    conn.close
+    conn.close()
     return rows
