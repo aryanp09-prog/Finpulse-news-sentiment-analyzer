@@ -35,5 +35,3 @@ def label(text):
         return "negative"
     else:
         return "neutral"
-    for t in tests:
-        print(f"{score(t):+.3f} {t}")
