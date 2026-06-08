@@ -143,7 +143,7 @@ def home_page():
         news_items.append(html.Div([
             html.Span(r["ticker"], style={"color": ACCENT, "fontWeight": "700", "marginRight": "10px"}),
             html.Span(r["text"]),
-            html.Span(f"  {r['score']:+.2f}", style={"color": color, "float": "right", "fontWeight": "700"}),
+            html.Span(r["label"].capitalize(), style={"color": color, "float": "right", "fontWeight": "700"}),
         ], style={"padding": "12px 0", "borderBottom": f"1px solid {BORDER}"}))
 
     return html.Div([
