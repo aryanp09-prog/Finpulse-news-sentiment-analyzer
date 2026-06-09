@@ -315,6 +315,7 @@ def analytics_page(default_ticker=None):
                "Drag across either panel to pan/zoom; double-click to reset.",
                style={"color": MUTED, "fontSize": "12px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
+        html.Div(id="news-summary"),
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),   # redraw every 60 seconds
     ])
 
@@ -390,8 +391,67 @@ def refresh_news(n_clicks):
 
 
 # ----------------------------------------------------------------------------- charts
+def build_news_summary(ticker, ohlc):
+    """A plain-English directional read of recent news for one ticker. Observational only."""
+    df = headlines_df()
+    df = df[df["ticker"] == ticker]
+    if df.empty:
+        return html.Div("No news stored for this ticker yet.",
+                        style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+
+    recent = df.head(25)
+    total = len(recent)
+    pos = int((recent["label"] == "positive").sum())
+    neg = int((recent["label"] == "negative").sum())
+    neu = int((recent["label"] == "neutral").sum())
+    avg = float(recent["score"].mean())
+    lean = "leaning positive" if avg > 0.05 else "leaning negative" if avg < -0.05 else "mixed"
+
+    if len(ohlc) >= 2:
+        first, last = float(ohlc["Close"].iloc[0]), float(ohlc["Close"].iloc[-1])
+        price_move = (last - first) / first * 100
+    else:
+        price_move = 0.0
+
+    news_up, news_down, price_up = avg > 0.05, avg < -0.05, price_move > 0
+    if not (news_up or news_down):
+        read = "News sentiment is mixed, so the news offers no clear directional signal right now."
+    elif news_up and price_up:
+        read = "News flow and price are both pointing up — sentiment is in line with the recent move."
+    elif news_down and not price_up:
+        read = "Negative news flow alongside a falling price — sentiment and price agree to the downside."
+    elif news_up and not price_up:
+        read = ("News has been mostly positive while price fell — a divergence. The news may not yet "
+                "be reflected in the price, or it was already priced in.")
+    else:
+        read = "News has been mostly negative while price rose — a divergence worth watching."
+
+    most_pos = recent.loc[recent["score"].idxmax()]
+    most_neg = recent.loc[recent["score"].idxmin()]
+
+    def link(row):
+        return html.A(row["text"], href=row["url"] if row["url"] else "#", target="_blank",
+                      style={"color": ACCENT, "textDecoration": "none"})
+
+    return html.Div([
+        html.H3(f"News Summary — {ticker}", style={"marginTop": 0}),
+        html.Div(f"{total} recent headlines · {pos} positive · {neg} negative · {neu} neutral · "
+                 f"avg sentiment {avg:+.2f} ({lean})", style={"color": MUTED, "marginBottom": "4px"}),
+        html.Div(f"Price over this window: {price_move:+.1f}%", style={"color": MUTED, "marginBottom": "12px"}),
+        html.Div(read, style={"background": "#1f2630", "borderLeft": f"3px solid {ACCENT}",
+                              "padding": "12px 14px", "borderRadius": "8px", "lineHeight": "1.5",
+                              "marginBottom": "14px"}),
+        html.Div([html.Span("Most positive: ", style={"color": GREEN, "fontWeight": "700"}), link(most_pos)],
+                 style={"marginBottom": "6px"}),
+        html.Div([html.Span("Most negative: ", style={"color": RED, "fontWeight": "700"}), link(most_neg)]),
+        html.Div("Observational summary of recent news — not buy, sell, or hold advice.",
+                 style={"color": MUTED, "fontSize": "11px", "marginTop": "14px", "fontStyle": "italic"}),
+    ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
+
+
 @app.callback(
     Output("combined-graph", "figure"),
+    Output("news-summary", "children"),
     Input("ticker-dropdown", "value"),
     Input("timeframe-dropdown", "value"),
     Input("tick", "n_intervals"),       # fires every 60s -> re-pull + redraw
@@ -424,7 +484,7 @@ def update_charts(ticker, timeframe, _tick):
     )
     fig.update_yaxes(title_text="Sentiment", range=[-1, 1], row=1, col=1)
     fig.update_yaxes(title_text="Price ($)", row=2, col=1)
-    return fig
+    return fig, build_news_summary(ticker, ohlc)
 
 
 if __name__ == "__main__":
