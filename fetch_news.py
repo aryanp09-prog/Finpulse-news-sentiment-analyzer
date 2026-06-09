@@ -9,11 +9,12 @@ Run from the repo root:  python fetch_news.py
 from finpulse.ingestion.news_api import fetch_headlines
 from finpulse.sentiment.analyzer import score, label
 from finpulse.sentiment.ticker_tagger import ALIASES
-from finpulse.storage.db import init_db, insert_headline
+from finpulse.storage.db import init_db, insert_headline, fetch_all
 
 
 def ingest(per_company=20):
     init_db()
+    existing = {r[6] for r in fetch_all() if len(r) > 6 and r[6]}   # URLs already stored
     total = 0
     for keyword, ticker in ALIASES.items():
         try:
@@ -21,13 +22,18 @@ def ingest(per_company=20):
         except Exception as e:                       # bad key, rate limit, network -> skip ticker
             print(f"{ticker}: skipped ({e})")
             continue
+        new = 0
         for h in headlines:
-            s = score(h["text"])
-            lab = label(h["text"])
-            insert_headline(h["text"], ticker, s, lab, h["timestamp"], url=h.get("url"))
+            if h.get("url") in existing:             # skip articles we already have
+                continue
+            insert_headline(h["text"], ticker, score(h["text"]), label(h["text"]),
+                            h["timestamp"], url=h.get("url"))
+            existing.add(h.get("url"))
+            new += 1
             total += 1
-        print(f"{ticker}: stored {len(headlines)} real headlines")
-    print(f"--- ingested {total} real headlines total ---")
+        print(f"{ticker}: {new} new")
+    print(f"--- ingested {total} new headlines ---")
+    return total
 
 
 if __name__ == "__main__":

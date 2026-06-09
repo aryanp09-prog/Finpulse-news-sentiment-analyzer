@@ -20,18 +20,20 @@ from dash import Dash, dcc, html, dash_table, Input, Output
 from finpulse.storage.db import fetch_all
 from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence
 from finpulse.sentiment.ticker_tagger import ALIASES
+from fetch_news import ingest
 
 TICKERS = sorted(set(ALIASES.values()))
 
 # One self-contained timeframe per option: candle size + a sensible lookback baked in.
 # (Daily is the finest meaningful bucket — news isn't intraday.)
+# Lookback in days. ALL timeframes use daily candles — only the window length changes.
 TIMEFRAMES = {
-    "Daily": {"window": "1D", "interval": "1d", "period": "1mo"},
-    "Weekly": {"window": "1W", "interval": "1wk", "period": "1y"},
-    "1 Month": {"window": "1D", "interval": "1d", "period": "1mo"},
-    "3 Months": {"window": "1D", "interval": "1d", "period": "3mo"},
-    "6 Months": {"window": "1D", "interval": "1d", "period": "6mo"},
-    "1 Year": {"window": "1D", "interval": "1d", "period": "1y"},
+    "Daily": 7,
+    "Weekly": 21,
+    "1 Month": 30,
+    "3 Months": 90,
+    "6 Months": 180,
+    "1 Year": 365,
 }
 
 # ----------------------------------------------------------------------------- theme
@@ -87,6 +89,59 @@ def latest_price_changes():
     return out
 
 
+def market_mood():
+    """Simplified fear/greed index (0-100). Blends 4 signals from the tracked tickers:
+    breadth, momentum, stability (inverse volatility), and our own news sentiment.
+    Heuristic + educational — NOT the real proprietary MMI."""
+    yf.set_tz_cache_location("D:/yf_cache")
+    data = yf.download(TICKERS, period="3mo", interval="1d", progress=False)["Close"].dropna(how="all")
+    parts = {}
+
+    last2 = data.tail(2)                                    # breadth: % of tickers up today
+    parts["Breadth"] = float((last2.iloc[-1] > last2.iloc[-2]).mean()) * 100
+
+    sma = data.rolling(50).mean().iloc[-1]                  # momentum: avg % above 50-day average
+    pct_above = float(((data.iloc[-1] - sma) / sma).mean()) * 100
+    parts["Momentum"] = min(100.0, max(0.0, 50 + pct_above * 5))
+
+    vol = float(data.pct_change().tail(20).std().mean()) * 100   # stability: low recent vol = calm
+    parts["Stability"] = max(0.0, 100 - min(100.0, vol * 25))
+
+    snaps = snapshot()                                     # our news sentiment, [-1,1] -> [0,100]
+    avg = sum(s["mean"] for s in snaps) / len(snaps) if snaps else 0.0
+    parts["Sentiment"] = (avg + 1) / 2 * 100
+
+    mmi = sum(parts.values()) / len(parts)
+    return mmi, parts
+
+
+def mood_label(value):
+    if value < 25:
+        return "Extreme Fear", RED, ("Markets may be oversold. Historically a contrarian window — "
+                                     "sentiment this low has often preceded an upward turn.")
+    if value < 45:
+        return "Fear", AMBER, ("Investors are cautious. Whether fear deepens or reverses depends "
+                               "on the trend, so watch the MMI's direction.")
+    if value < 55:
+        return "Neutral", MUTED, ("Sentiment is balanced — no strong fear or greed signal in the "
+                                  "market right now.")
+    if value < 75:
+        return "Greed", GREEN, ("Investors are optimistic and momentum is positive, but watch for "
+                                "overbought conditions as greed builds.")
+    return "Extreme Greed", GREEN, ("Markets may be overbought. Extreme greed has often preceded a "
+                                    "pullback — caution on opening fresh positions.")
+
+
+# All zones, for the reference guide under the gauge.
+MOOD_ZONES = [
+    ("Extreme Fear", "0–25", RED, "Possibly oversold — historically a contrarian buying window."),
+    ("Fear", "25–45", AMBER, "Cautious market; direction depends on the trend."),
+    ("Neutral", "45–55", MUTED, "Balanced — no strong fear or greed signal."),
+    ("Greed", "55–75", GREEN, "Optimistic momentum; watch for overbought conditions."),
+    ("Extreme Greed", "75–100", GREEN, "Possibly overbought — often precedes a pullback."),
+]
+
+
 # ----------------------------------------------------------------------------- app
 app = Dash(__name__, suppress_callback_exceptions=True)
 app.title = "FinPulse"
@@ -119,7 +174,7 @@ app.layout = html.Div([
 
 
 # ----------------------------------------------------------------------------- pages
-def home_page():
+def build_home_content():
     snap = snapshot()
     prices = latest_price_changes()
     cards = []
@@ -167,12 +222,75 @@ def home_page():
         news_items.append(html.A(row, href=href, target="_blank",
                                  style={"textDecoration": "none", "color": "inherit", "cursor": "pointer"}))
 
+    mmi, parts = market_mood()
+    mood_text, mood_color, mood_desc = mood_label(mmi)
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number", value=round(mmi, 1), number={"font": {"size": 38}},
+        gauge={
+            "axis": {"range": [0, 100]},
+            "bar": {"color": mood_color},
+            "steps": [
+                {"range": [0, 25], "color": "#5b1414"},
+                {"range": [25, 45], "color": "#6b3b0a"},
+                {"range": [45, 55], "color": "#2a3038"},
+                {"range": [55, 75], "color": "#14532d"},
+                {"range": [75, 100], "color": "#166534"},
+            ],
+        },
+    ))
+    gauge.update_layout(template="plotly_dark", paper_bgcolor=PANEL, height=240,
+                        margin={"t": 20, "b": 10, "l": 30, "r": 30}, font={"color": TEXT})
+    zone_guide = []
+    for name, rng, col, desc in MOOD_ZONES:
+        active = (name == mood_text)
+        zone_guide.append(html.Div([
+            html.Div(f"{name} ({rng})", style={"color": col, "fontWeight": "700", "fontSize": "12px"}),
+            html.Div(desc, style={"color": MUTED, "fontSize": "11px", "lineHeight": "1.4"}),
+        ], style={"flex": "1", "minWidth": "160px", "padding": "8px 10px", "borderRadius": "8px",
+                  "background": "#1f2630" if active else "transparent",
+                  "border": f"1px solid {col if active else 'transparent'}"}))
+
+    mmi_panel = html.Div([
+        html.Div([
+            dcc.Graph(figure=gauge, config={"displayModeBar": False}, style={"flex": "2"}),
+            html.Div([
+                html.Div("Market Mood Index", style={"fontSize": "14px", "color": MUTED}),
+                html.Div(mood_text, style={"fontSize": "28px", "fontWeight": "800", "color": mood_color}),
+                html.Div(mood_desc, style={"fontSize": "12.5px", "color": TEXT, "marginTop": "6px",
+                                           "lineHeight": "1.5", "maxWidth": "340px"}),
+                html.Div([html.Div(f"{k}: {v:.0f}/100", style={"fontSize": "11px", "color": MUTED})
+                          for k, v in parts.items()], style={"marginTop": "10px"}),
+            ], style={"flex": "1", "display": "flex", "flexDirection": "column", "justifyContent": "center"}),
+        ], style={"display": "flex", "gap": "20px", "alignItems": "center"}),
+        html.Div(zone_guide, style={"display": "flex", "gap": "8px", "flexWrap": "wrap",
+                                    "marginTop": "16px", "borderTop": f"1px solid {BORDER}", "paddingTop": "14px"}),
+    ], style={**CARD_STYLE, "flex": "unset", "marginBottom": "28px"})
+
     return html.Div([
-        html.H2("Market Overview"),
-        html.P("Latest daily price move per ticker — sentiment shown underneath.", style={"color": MUTED}),
+        mmi_panel,
+        html.H2("Tracked Tickers"),
         html.Div(cards, style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "32px"}),
         html.H2("Top Headlines"),
         html.Div(news_items, style={**CARD_STYLE, "flex": "unset"}),
+    ])
+
+
+def home_page():
+    return html.Div([
+        html.Div([
+            html.Div([
+                html.H2("Market Overview", style={"marginBottom": "4px"}),
+                html.P("Latest daily price move per ticker — sentiment shown underneath.",
+                       style={"color": MUTED, "marginTop": 0}),
+            ]),
+            html.Button("🔄 Fetch latest news", id="fetch-btn", n_clicks=0, style={
+                "background": ACCENT, "color": "#fff", "border": "none", "borderRadius": "8px",
+                "padding": "10px 16px", "fontWeight": "700", "cursor": "pointer", "height": "fit-content",
+            }),
+        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}),
+        html.Div(id="fetch-status", style={"color": MUTED, "fontSize": "13px",
+                                            "minHeight": "18px", "marginBottom": "8px"}),
+        dcc.Loading(html.Div(id="home-content", children=build_home_content())),
     ])
 
 
@@ -256,6 +374,21 @@ def render(pathname, search):
     return home_page()
 
 
+@app.callback(
+    Output("home-content", "children"),
+    Output("fetch-status", "children"),
+    Input("fetch-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def refresh_news(n_clicks):
+    try:
+        count = ingest()                                  # pull fresh headlines from NewsAPI
+        msg = f"✓ Fetched {count} new headline(s)."
+    except Exception as e:
+        return build_home_content(), f"⚠ Fetch failed: {e}"
+    return build_home_content(), msg
+
+
 # ----------------------------------------------------------------------------- charts
 @app.callback(
     Output("combined-graph", "figure"),
@@ -264,10 +397,10 @@ def render(pathname, search):
     Input("tick", "n_intervals"),       # fires every 60s -> re-pull + redraw
 )
 def update_charts(ticker, timeframe, _tick):
-    tf = TIMEFRAMES[timeframe]
-    sent = aggregate_sentiment(ticker, tf["window"])
-    ohlc = load_ohlc(ticker, period=tf["period"], interval=tf["interval"])
-    sent = sent[sent.index >= ohlc.index.min()]    # trim sentiment to the timeframe
+    days = TIMEFRAMES[timeframe]
+    sent = aggregate_sentiment(ticker, "1D")        # always daily buckets
+    ohlc = load_ohlc(ticker, days=days)             # always daily candles
+    sent = sent[sent.index >= ohlc.index.min()]     # trim sentiment to the timeframe
 
     # two stacked panels sharing ONE x-axis -> zoom/pan syncs and they always align
     fig = make_subplots(

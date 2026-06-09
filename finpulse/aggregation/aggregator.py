@@ -1,4 +1,6 @@
 import sqlite3
+from datetime import datetime, timezone, timedelta
+
 import pandas as pd
 import yfinance as yf
 from finpulse.storage.db import DB_PATH
@@ -48,13 +50,16 @@ def detect_divergence(sentiment, price_change_pct, sent_threshold=0.1, price_thr
     return None
 
 
-def load_ohlc(ticker, period="1mo", interval="1d"):
-    """Open/High/Low/Close/Volume for a ticker (for candlestick charts)."""
+def load_ohlc(ticker, days=30):
+    """Daily Open/High/Low/Close for roughly the last `days` days (candlestick charts).
+
+    Always daily candles — the timeframe only changes how far back we look.
+    """
     yf.set_tz_cache_location("D:/yf_cache")
-    df = yf.download(ticker, period=period, interval=interval)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                     end=(end + timedelta(days=1)).strftime("%Y-%m-%d"), interval="1d")
     ohlc = df.xs(ticker, axis=1, level=1)          # drop the ticker level -> Open/High/Low/Close/Volume
-    if ohlc.index.tz is None:
-        ohlc.index = ohlc.index.tz_localize("UTC")   # daily bars come back tz-naive
-    else:
-        ohlc.index = ohlc.index.tz_convert("UTC")    # intraday bars come back tz-aware
+    ohlc.index = ohlc.index.tz_localize("UTC")     # daily bars come back tz-naive
     return ohlc
