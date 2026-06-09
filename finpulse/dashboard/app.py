@@ -10,6 +10,7 @@ Run from the repo root:  python -m finpulse.dashboard.app   ->  http://127.0.0.1
 """
 
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
 
 import pandas as pd
@@ -35,6 +36,18 @@ TIMEFRAMES = {
     "3 Months": 90,
     "6 Months": 180,
     "1 Year": 365,
+}
+
+# Each ticker's peers, for the price-comparison chart.
+PEERS = {
+    "AAPL": ["MSFT", "GOOGL"],
+    "MSFT": ["AAPL", "GOOGL"],
+    "GOOGL": ["MSFT", "META"],
+    "META": ["GOOGL", "NFLX"],
+    "AMZN": ["AAPL", "MSFT"],
+    "NVDA": ["MSFT", "AMZN"],
+    "NFLX": ["META", "GOOGL"],
+    "TSLA": ["NVDA", "AAPL"],
 }
 
 # ----------------------------------------------------------------------------- theme
@@ -348,6 +361,7 @@ def analytics_page(default_ticker=None):
                "Drag across either panel to pan/zoom; double-click to reset.",
                style={"color": MUTED, "fontSize": "12px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
+        html.Div(id="price-comparison"),
         html.Div(id="news-summary"),
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),   # redraw every 60 seconds
     ])
@@ -517,8 +531,48 @@ def build_news_summary(ticker, ohlc):
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
 
 
+def build_price_comparison(ticker, days):
+    """Normalized %-change line chart of the ticker vs its peers (Tickertape-style)."""
+    symbols = [ticker] + PEERS.get(ticker, [])
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=max(days, 30))     # at least a month so the comparison is meaningful
+
+    def _dl():
+        yf.set_tz_cache_location("D:/yf_cache")
+        return yf.download(symbols, start=start.strftime("%Y-%m-%d"),
+                           end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
+                           interval="1d", progress=False)["Close"]
+
+    data = cached(("cmp", tuple(symbols), days), 300, _dl)
+    if data is None or len(data) == 0:
+        return html.Div("Comparison data temporarily unavailable.",
+                        style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+
+    colors = [ACCENT, "#7ee787", "#f778ba", "#ffa657"]
+    fig = go.Figure()
+    for i, sym in enumerate(symbols):
+        col = data[sym] if sym in getattr(data, "columns", []) else data
+        s = col.dropna()
+        if s.empty:
+            continue
+        norm = (s / s.iloc[0] - 1) * 100
+        fig.add_trace(go.Scatter(x=norm.index, y=norm, mode="lines", name=sym,
+                                 line={"color": colors[i % len(colors)], "width": 2}))
+    fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
+    fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=320,
+                      margin={"t": 44, "l": 50, "r": 20, "b": 36},
+                      title=f"{ticker} vs peers — % change", yaxis_title="% change",
+                      legend={"orientation": "h", "y": 1.12, "x": 0})
+    return html.Div([
+        html.Div("Each line is % change from the window's start, so differently-priced stocks compare fairly.",
+                 style={"color": MUTED, "fontSize": "12px", "marginBottom": "6px"}),
+        dcc.Graph(figure=fig, config={"displayModeBar": False}),
+    ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
+
+
 @app.callback(
     Output("combined-graph", "figure"),
+    Output("price-comparison", "children"),
     Output("news-summary", "children"),
     Input("ticker-dropdown", "value"),
     Input("timeframe-dropdown", "value"),
@@ -534,7 +588,8 @@ def update_charts(ticker, timeframe, _tick):
         empty = go.Figure()
         empty.update_layout(template="plotly_dark", paper_bgcolor=BG, plot_bgcolor=BG, height=720,
                             annotations=[{"text": msg, "showarrow": False, "font": {"color": MUTED, "size": 14}}])
-        return empty, html.Div(msg, style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+        note = html.Div(msg, style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+        return empty, html.Div(), note
 
     sent = aggregate_sentiment(ticker, "1D")        # always daily buckets
     sent = sent[sent.index >= ohlc.index.min()]     # trim sentiment to the timeframe
@@ -561,7 +616,7 @@ def update_charts(ticker, timeframe, _tick):
     )
     fig.update_yaxes(title_text="Sentiment", range=[-1, 1], row=1, col=1)
     fig.update_yaxes(title_text="Price ($)", row=2, col=1)
-    return fig, build_news_summary(ticker, ohlc)
+    return fig, build_price_comparison(ticker, days), build_news_summary(ticker, ohlc)
 
 
 if __name__ == "__main__":
