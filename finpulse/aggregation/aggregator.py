@@ -60,6 +60,8 @@ def load_ohlc(ticker, days=30):
     start = end - timedelta(days=days)
     df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
                      end=(end + timedelta(days=1)).strftime("%Y-%m-%d"), interval="1d")
+    if df.empty:                                   # yfinance throttled / no data
+        return df
     ohlc = df.xs(ticker, axis=1, level=1)          # drop the ticker level -> Open/High/Low/Close/Volume
     ohlc.index = ohlc.index.tz_localize("UTC")     # daily bars come back tz-naive
     return ohlc

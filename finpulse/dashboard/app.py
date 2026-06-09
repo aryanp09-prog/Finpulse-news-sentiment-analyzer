@@ -9,6 +9,7 @@ Reads directly from the aggregator + storage layers (could equally hit the API).
 Run from the repo root:  python -m finpulse.dashboard.app   ->  http://127.0.0.1:8050
 """
 
+import time
 from urllib.parse import parse_qs
 
 import pandas as pd
@@ -53,6 +54,22 @@ CARD_STYLE = {
 }
 
 
+# ----------------------------------------------------------------------------- caching
+# yfinance throttles if called too often. Cache results briefly so the 60s auto-refresh
+# and repeated page loads reuse data instead of hammering Yahoo (prices are ~15min delayed anyway).
+_CACHE = {}
+
+
+def cached(key, ttl, fn):
+    now = time.time()
+    hit = _CACHE.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    value = fn()
+    _CACHE[key] = (now, value)
+    return value
+
+
 # ----------------------------------------------------------------------------- data helpers
 def headlines_df():
     cols = ["id", "text", "ticker", "score", "label", "timestamp", "url"]
@@ -95,6 +112,8 @@ def market_mood():
     Heuristic + educational — NOT the real proprietary MMI."""
     yf.set_tz_cache_location("D:/yf_cache")
     data = yf.download(TICKERS, period="3mo", interval="1d", progress=False)["Close"].dropna(how="all")
+    if data.empty or len(data) < 2:                        # yfinance throttled -> neutral default
+        return 50.0, {"Breadth": 50.0, "Momentum": 50.0, "Stability": 50.0, "Sentiment": 50.0}
     parts = {}
 
     last2 = data.tail(2)                                    # breadth: % of tickers up today
@@ -176,7 +195,7 @@ app.layout = html.Div([
 # ----------------------------------------------------------------------------- pages
 def build_home_content():
     snap = snapshot()
-    prices = latest_price_changes()
+    prices = cached("prices", 300, latest_price_changes)
     cards = []
     for s in snap:
         t = s["ticker"]
@@ -222,7 +241,7 @@ def build_home_content():
         news_items.append(html.A(row, href=href, target="_blank",
                                  style={"textDecoration": "none", "color": "inherit", "cursor": "pointer"}))
 
-    mmi, parts = market_mood()
+    mmi, parts = cached("mmi", 300, market_mood)
     mood_text, mood_color, mood_desc = mood_label(mmi)
     gauge = go.Figure(go.Indicator(
         mode="gauge+number", value=round(mmi, 1), number={"font": {"size": 38}},
@@ -458,8 +477,17 @@ def build_news_summary(ticker, ohlc):
 )
 def update_charts(ticker, timeframe, _tick):
     days = TIMEFRAMES[timeframe]
+    ohlc = cached(("ohlc", ticker, days), 300, lambda: load_ohlc(ticker, days=days))
+
+    if ohlc is None or ohlc.empty:                  # yfinance throttled / no data
+        _CACHE.pop(("ohlc", ticker, days), None)    # don't keep a failed result cached
+        msg = "Price data temporarily unavailable (yfinance is rate-limiting). Try again in a moment."
+        empty = go.Figure()
+        empty.update_layout(template="plotly_dark", paper_bgcolor=BG, plot_bgcolor=BG, height=720,
+                            annotations=[{"text": msg, "showarrow": False, "font": {"color": MUTED, "size": 14}}])
+        return empty, html.Div(msg, style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+
     sent = aggregate_sentiment(ticker, "1D")        # always daily buckets
-    ohlc = load_ohlc(ticker, days=days)             # always daily candles
     sent = sent[sent.index >= ohlc.index.min()]     # trim sentiment to the timeframe
 
     # two stacked panels sharing ONE x-axis -> zoom/pan syncs and they always align
