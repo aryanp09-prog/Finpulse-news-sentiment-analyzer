@@ -164,6 +164,20 @@ MOOD_ZONES = [
 # ----------------------------------------------------------------------------- app
 app = Dash(__name__, suppress_callback_exceptions=True)
 app.title = "FinPulse"
+app.index_string = """<!DOCTYPE html>
+<html>
+  <head>
+    {%metas%}<title>{%title%}</title>{%favicon%}{%css%}
+    <style>
+      .news-row { transition: background 0.12s ease; }
+      .news-row:hover { background: #1b212b; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: #2a3038; border-radius: 5px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+    </style>
+  </head>
+  <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body>
+</html>"""
 
 
 def navlink(label, href):
@@ -339,40 +353,66 @@ def analytics_page(default_ticker=None):
     ])
 
 
-def news_page():
+def _sentiment_pill(label):
+    c = {"positive": GREEN, "negative": RED}.get(label, MUTED)
+    return html.Span(label.capitalize(), style={
+        "color": c, "border": f"1px solid {c}", "borderRadius": "20px",
+        "padding": "3px 12px", "fontSize": "11px", "fontWeight": "700", "whiteSpace": "nowrap",
+    })
+
+
+def _news_row(r):
+    href = r["url"] if r["url"] else "#"
+    when = r["timestamp"].strftime("%b %d, %Y · %H:%M")
+    return html.A([
+        html.Span(r["ticker"], style={
+            "background": "#1f2630", "color": ACCENT, "borderRadius": "6px", "padding": "4px 9px",
+            "fontSize": "12px", "fontWeight": "700", "minWidth": "56px", "textAlign": "center",
+            "whiteSpace": "nowrap",
+        }),
+        html.Div([
+            html.Div(r["text"], style={"color": TEXT, "fontWeight": "500", "lineHeight": "1.4"}),
+            html.Div(when, style={"color": MUTED, "fontSize": "11px", "marginTop": "4px"}),
+        ], style={"flex": "1", "margin": "0 16px", "minWidth": 0}),
+        _sentiment_pill(r["label"]),
+    ], href=href, target="_blank", className="news-row", style={
+        "display": "flex", "alignItems": "center", "padding": "14px 18px",
+        "borderBottom": f"1px solid {BORDER}", "textDecoration": "none", "color": "inherit",
+    })
+
+
+def build_news_feed(ticker="All", sentiment="All"):
     df = headlines_df()
-    if not df.empty:
-        df = df.copy()
-        df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
-        df["score"] = df["score"].round(3)
-        df["text"] = df.apply(
-            lambda r: f"[{str(r['text']).replace('[', '(').replace(']', ')')}]({r['url']})"
-            if r["url"] else str(r["text"]),
-            axis=1,
-        )
+    if df.empty:
+        return html.Div("No news ingested yet — run fetch_news.py or click 'Fetch latest news'.",
+                        style={"color": MUTED, "padding": "24px"})
+    if ticker and ticker != "All":
+        df = df[df["ticker"] == ticker]
+    if sentiment and sentiment != "All":
+        df = df[df["label"] == sentiment]
+    if df.empty:
+        return html.Div("No headlines match this filter.", style={"color": MUTED, "padding": "24px"})
+    rows = [_news_row(r) for _, r in df.head(150).iterrows()]
+    return html.Div(rows, style={**CARD_STYLE, "flex": "unset", "padding": "0", "overflow": "hidden"})
+
+
+def news_page():
+    total = len(headlines_df())
+    drop = {"width": "190px", "color": "#000"}
     return html.Div([
         html.H2("All News"),
-        html.P(f"{len(df)} processed headlines.", style={"color": MUTED}),
-        dash_table.DataTable(
-            data=df[["timestamp", "ticker", "label", "score", "text"]].to_dict("records") if not df.empty else [],
-            columns=[
-                {"name": "Timestamp", "id": "timestamp"},
-                {"name": "Ticker", "id": "ticker"},
-                {"name": "Label", "id": "label"},
-                {"name": "Score", "id": "score"},
-                {"name": "Headline", "id": "text", "presentation": "markdown"},
-            ],
-            markdown_options={"link_target": "_blank"},
-            page_size=20, sort_action="native", filter_action="native",
-            style_table={"overflowX": "auto"},
-            style_header={"background": PANEL, "color": TEXT, "fontWeight": "700", "border": f"1px solid {BORDER}"},
-            style_cell={"background": BG, "color": TEXT, "border": f"1px solid {BORDER}",
-                        "textAlign": "left", "padding": "8px", "fontFamily": "Segoe UI, sans-serif"},
-            style_data_conditional=[
-                {"if": {"filter_query": "{label} = positive", "column_id": "label"}, "color": GREEN},
-                {"if": {"filter_query": "{label} = negative", "column_id": "label"}, "color": RED},
-            ],
-        ),
+        html.P(f"{total} processed headlines — newest first.", style={"color": MUTED}),
+        html.Div([
+            dcc.Dropdown(id="news-ticker", clearable=False, value="All", style=drop,
+                         options=[{"label": "All tickers", "value": "All"}]
+                                 + [{"label": t, "value": t} for t in TICKERS]),
+            dcc.Dropdown(id="news-sentiment", clearable=False, value="All", style=drop,
+                         options=[{"label": "All sentiment", "value": "All"},
+                                  {"label": "Positive", "value": "positive"},
+                                  {"label": "Neutral", "value": "neutral"},
+                                  {"label": "Negative", "value": "negative"}]),
+        ], style={"display": "flex", "gap": "12px", "marginBottom": "16px"}),
+        html.Div(id="news-list", children=build_news_feed()),
     ])
 
 
@@ -407,6 +447,15 @@ def refresh_news(n_clicks):
     except Exception as e:
         return build_home_content(), f"⚠ Fetch failed: {e}"
     return build_home_content(), msg
+
+
+@app.callback(
+    Output("news-list", "children"),
+    Input("news-ticker", "value"),
+    Input("news-sentiment", "value"),
+)
+def filter_news(ticker, sentiment):
+    return build_news_feed(ticker, sentiment)
 
 
 # ----------------------------------------------------------------------------- charts
