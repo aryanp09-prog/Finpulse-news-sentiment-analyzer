@@ -20,7 +20,7 @@ from plotly.subplots import make_subplots
 from dash import Dash, dcc, html, dash_table, Input, Output
 
 from finpulse.storage.db import fetch_all
-from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence
+from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence, recommendation
 from fetch_news import ingest
 from config import TICKERS, STOCKS, yf_symbol, currency
 
@@ -49,6 +49,11 @@ GREEN = "#3fb950"
 RED = "#f85149"
 ACCENT = "#58a6ff"
 AMBER = "#d29922"
+
+REC_COLORS = {
+    "Strong Buy": "#2ea043", "Buy": "#3fb950", "Hold": "#d29922",
+    "Sell": "#f0883e", "Strong Sell": "#f85149",
+}
 
 CARD_STYLE = {
     "background": PANEL, "border": f"1px solid {BORDER}", "borderRadius": "12px",
@@ -499,6 +504,9 @@ def build_news_summary(ticker, ohlc):
     else:
         read = "News has been mostly negative while price rose — a divergence worth watching."
 
+    rec, rec_score, comps = recommendation(avg, price_move)
+    rec_color = REC_COLORS[rec]
+
     most_pos = recent.loc[recent["score"].idxmax()]
     most_neg = recent.loc[recent["score"].idxmin()]
 
@@ -507,17 +515,32 @@ def build_news_summary(ticker, ohlc):
                       style={"color": ACCENT, "textDecoration": "none"})
 
     return html.Div([
-        html.H3(f"News Summary — {ticker}", style={"marginTop": 0}),
+        html.H3(f"Analysis & Signal — {ticker}", style={"marginTop": 0}),
         html.Div(f"{total} recent headlines · {pos} positive · {neg} negative · {neu} neutral · "
                  f"avg sentiment {avg:+.2f} ({lean})", style={"color": MUTED, "marginBottom": "4px"}),
         html.Div(f"Price over this window: {price_move:+.1f}%", style={"color": MUTED, "marginBottom": "12px"}),
-        html.Div(read, style={"background": "#1f2630", "borderLeft": f"3px solid {ACCENT}",
-                              "padding": "12px 14px", "borderRadius": "8px", "lineHeight": "1.5",
-                              "marginBottom": "14px"}),
+        # ---- recommendation signal ----
+        html.Div([
+            html.Div([
+                html.Div("RECOMMENDATION", style={"fontSize": "11px", "color": MUTED, "letterSpacing": "1px"}),
+                html.Div(rec, style={"fontSize": "30px", "fontWeight": "800", "color": rec_color}),
+            ]),
+            html.Div([
+                html.Div(f"Composite score {rec_score:+.2f}", style={"fontSize": "13px", "fontWeight": "700"}),
+                html.Div(f"News sentiment (60%): {comps['sentiment']:+.2f}",
+                         style={"fontSize": "11px", "color": MUTED}),
+                html.Div(f"Price momentum (40%): {comps['momentum']:+.2f}",
+                         style={"fontSize": "11px", "color": MUTED}),
+            ], style={"textAlign": "right"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                  "background": "#1f2630", "border": f"1px solid {rec_color}", "borderRadius": "10px",
+                  "padding": "14px 18px", "marginBottom": "12px"}),
+        html.Div(read, style={"color": MUTED, "fontSize": "12.5px", "lineHeight": "1.5", "marginBottom": "14px"}),
         html.Div([html.Span("Most positive: ", style={"color": GREEN, "fontWeight": "700"}), link(most_pos)],
                  style={"marginBottom": "6px"}),
         html.Div([html.Span("Most negative: ", style={"color": RED, "fontWeight": "700"}), link(most_neg)]),
-        html.Div("Observational summary of recent news — not buy, sell, or hold advice.",
+        html.Div("Rule-based educational signal — 60% news sentiment + 40% price momentum, "
+                 "mapped to five categories. NOT buy/sell/hold financial advice.",
                  style={"color": MUTED, "fontSize": "11px", "marginTop": "14px", "fontStyle": "italic"}),
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
 

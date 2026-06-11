@@ -52,6 +52,33 @@ def detect_divergence(sentiment, price_change_pct, sent_threshold=0.1, price_thr
     return None
 
 
+def recommendation(avg_sentiment, price_change_pct):
+    """Rule-based EDUCATIONAL signal (not financial advice).
+
+    Methodology (transparent + documented):
+      sentiment_component = clamp(avg_sentiment / 0.5, -1..+1)   # +/-0.5 sentiment = full
+      momentum_component  = clamp(price_change_pct / 10, -1..+1) # +/-10% move    = full
+      score = 0.6 * sentiment_component + 0.4 * momentum_component   # sentiment-led
+    Score is then mapped to five categories.
+
+    Returns (label, score, components_dict).
+    """
+    s = max(-1.0, min(1.0, avg_sentiment / 0.5))
+    m = max(-1.0, min(1.0, price_change_pct / 10.0))
+    score = 0.6 * s + 0.4 * m
+    if score >= 0.45:
+        label = "Strong Buy"
+    elif score >= 0.15:
+        label = "Buy"
+    elif score > -0.15:
+        label = "Hold"
+    elif score > -0.45:
+        label = "Sell"
+    else:
+        label = "Strong Sell"
+    return label, score, {"sentiment": s, "momentum": m}
+
+
 def load_ohlc(ticker, days=30):
     """Daily Open/High/Low/Close for roughly the last `days` days (candlestick charts).
 

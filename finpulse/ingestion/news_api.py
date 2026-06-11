@@ -17,8 +17,14 @@ API_KEY = os.getenv("NEWSAPI_KEY")
 URL = "https://newsapi.org/v2/everything"
 
 # Restrict to financial outlets so "Apple" means the company, not a fruit or a football match.
-FINANCE_DOMAINS = ("bloomberg.com,reuters.com,cnbc.com,wsj.com,marketwatch.com,"
-                   "fortune.com,businessinsider.com,finance.yahoo.com,fool.com,investing.com")
+FINANCE_DOMAINS = (
+    # global finance
+    "bloomberg.com,reuters.com,cnbc.com,wsj.com,marketwatch.com,fortune.com,"
+    "businessinsider.com,finance.yahoo.com,fool.com,investing.com,"
+    # indian finance (for the NSE-listed tickers)
+    "moneycontrol.com,economictimes.indiatimes.com,livemint.com,business-standard.com,"
+    "thehindubusinessline.com,financialexpress.com,ndtvprofit.com,zeebiz.com"
+)
 
 
 def fetch_headlines(query, limit=20):

@@ -11,12 +11,12 @@ STOCKS = {
     # ---- Banking (India) ----
     "HDFCBANK": {"name": "HDFC Bank", "yf": "HDFCBANK.NS", "currency": "₹", "market": "IN",
                  "sector": "Banking", "peers": ["SBIN"], "keywords": ["hdfc bank", "hdfc"]},
-    "SBIN": {"name": "State Bank of India", "yf": "SBIN.NS", "currency": "₹", "market": "IN",
+    "SBIN": {"name": "State Bank of India", "query": "SBI", "yf": "SBIN.NS", "currency": "₹", "market": "IN",
              "sector": "Banking", "peers": ["HDFCBANK"], "keywords": ["state bank", "sbi"]},
     # ---- Retail (India) ----
     "TRENT": {"name": "Trent", "yf": "TRENT.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["DMART"], "keywords": ["trent"]},
-    "DMART": {"name": "Avenue Supermarts", "yf": "DMART.NS", "currency": "₹", "market": "IN",
+    "DMART": {"name": "Avenue Supermarts", "query": "DMart", "yf": "DMART.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["TRENT"], "keywords": ["avenue supermarts", "dmart"]},
     # ---- Manufacturing (India) ----
     "SIEMENS": {"name": "Siemens India", "yf": "SIEMENS.NS", "currency": "₹", "market": "IN",

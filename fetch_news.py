@@ -18,7 +18,7 @@ def ingest(per_company=20):
     total = 0
     for ticker, info in STOCKS.items():
         try:
-            headlines = fetch_headlines(info["name"], limit=per_company)
+            headlines = fetch_headlines(info.get("query", info["name"]), limit=per_company)
         except Exception as e:                       # bad key, rate limit, network -> skip ticker
             print(f"{ticker}: skipped ({e})")
             continue
