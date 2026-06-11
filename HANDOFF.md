@@ -45,6 +45,9 @@ FastAPI REST API and a Dash/Plotly dashboard.
 - Added `aggregator.recommendation(avg_sentiment, price_change_pct)` (Strong Buy..Strong Sell,
   60% sentiment + 40% momentum) and rendered it in `app.build_news_summary` (the analytics summary).
 - Added this `HANDOFF.md` + smoke-test gate in `commands.txt` (section 7).
+- Redesigned the home "Tracked Tickers" section in `app.build_home_content`: responsive CSS-grid
+  of equal-height cards, an IN/US market chip, a labeled sentiment row (Positive/Neutral/Negative
+  + score), a prominent amber "Disagreement" divergence flag, and a legend explaining it.
 
 **In progress (file · function · what's half-done):**
 - News coverage is thin/zero for some Indian tickers (DMART = 0, ABB = 1, SIEMENS = 2, TRENT = 3).

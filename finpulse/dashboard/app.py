@@ -223,33 +223,56 @@ def build_home_content():
     for s in snap:
         t = s["ticker"]
         pc = prices.get(t)
+        market = STOCKS[t]["market"]
+
+        # sentiment label + colour
+        if s["mean"] > 0.05:
+            s_label, s_color = "Positive", GREEN
+        elif s["mean"] < -0.05:
+            s_label, s_color = "Negative", RED
+        else:
+            s_label, s_color = "Neutral", MUTED
+
+        # price + day change
         if pc:
             pcolor = GREEN if pc["pct"] >= 0 else RED
-            price_rows = [
-                html.Div(f"{currency(t)}{pc['price']:,.2f}", style={"fontSize": "24px", "fontWeight": "800"}),
-                html.Div(f"{pc['pct']:+.2f}%", style={"fontSize": "16px", "fontWeight": "700", "color": pcolor}),
+            price_block = [
+                html.Div(f"{currency(t)}{pc['price']:,.2f}",
+                         style={"fontSize": "22px", "fontWeight": "800", "marginTop": "10px"}),
+                html.Span(f"{pc['pct']:+.2f}% today",
+                          style={"fontSize": "13px", "fontWeight": "700", "color": pcolor}),
             ]
+            div = detect_divergence(s["mean"], pc["pct"])
         else:
-            price_rows = [html.Div("price n/a", style={"color": MUTED})]
-        scolor = GREEN if s["mean"] > 0.05 else RED if s["mean"] < -0.05 else MUTED
-        div = detect_divergence(s["mean"], pc["pct"]) if pc else None
-        badge = []
+            price_block = [html.Div("price n/a", style={"color": MUTED, "marginTop": "10px"})]
+            div = None
+
+        # disagreement (divergence) flag — clearly highlighted
+        flag = []
         if div:
-            badge = [html.Div(f"⚠ {div}", style={
-                "fontSize": "11px", "color": AMBER, "fontWeight": "700", "marginTop": "8px",
-                "border": f"1px solid {AMBER}", "borderRadius": "6px", "padding": "3px 6px",
-                "display": "inline-block",
-            })]
+            flag = [html.Div(["⚠ Disagreement — ", html.Span(div, style={"fontWeight": "700"})],
+                             style={"fontSize": "11px", "color": AMBER, "background": "#3a2d10",
+                                    "border": f"1px solid {AMBER}", "borderRadius": "8px",
+                                    "padding": "6px 8px", "marginTop": "12px", "lineHeight": "1.35"})]
+
         card = html.Div([
-            html.Div(t, style={"fontSize": "18px", "fontWeight": "700"}),
-            *price_rows,
-            html.Div(f"sentiment {s['mean']:+.2f}",
-                     style={"fontSize": "12px", "color": scolor, "marginTop": "8px"}),
-            *badge,
-        ], style=CARD_STYLE)
+            html.Div([
+                html.Span(t, style={"fontSize": "17px", "fontWeight": "800"}),
+                html.Span(market, style={"fontSize": "10px", "fontWeight": "700", "color": MUTED,
+                                         "border": f"1px solid {BORDER}", "borderRadius": "6px",
+                                         "padding": "1px 6px"}),
+            ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}),
+            *price_block,
+            html.Div([
+                html.Span("Sentiment", style={"fontSize": "11px", "color": MUTED}),
+                html.Span(f"{s_label}  {s['mean']:+.2f}",
+                          style={"fontSize": "12px", "fontWeight": "700", "color": s_color}),
+            ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                      "marginTop": "12px", "paddingTop": "10px", "borderTop": f"1px solid {BORDER}"}),
+            *flag,
+        ], style={**CARD_STYLE, "minWidth": "unset", "width": "100%"})
         cards.append(dcc.Link(card, href=f"/analytics?ticker={t}",
-                              style={"textDecoration": "none", "color": "inherit",
-                                     "flex": "1", "minWidth": "150px"}))
+                              style={"textDecoration": "none", "color": "inherit", "display": "flex"}))
 
     top = headlines_df().head(8)
     news_items = []
@@ -310,8 +333,13 @@ def build_home_content():
 
     return html.Div([
         mmi_panel,
-        html.H2("Tracked Tickers"),
-        html.Div(cards, style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "32px"}),
+        html.H2("Tracked Tickers", style={"marginBottom": "4px"}),
+        html.P([html.Span("⚠ Disagreement", style={"color": AMBER, "fontWeight": "700"}),
+                " = news sentiment and price are moving in opposite directions. Click any card to dig in."],
+               style={"color": MUTED, "fontSize": "12px", "marginTop": 0, "marginBottom": "14px"}),
+        html.Div(cards, style={"display": "grid",
+                               "gridTemplateColumns": "repeat(auto-fill, minmax(215px, 1fr))",
+                               "gap": "14px", "marginBottom": "32px"}),
         html.H2("Top Headlines"),
         html.Div(news_items, style={**CARD_STYLE, "flex": "unset"}),
     ])
