@@ -8,17 +8,17 @@ Run from the repo root:  python fetch_news.py
 
 from finpulse.ingestion.news_api import fetch_headlines
 from finpulse.sentiment.analyzer import score, label
-from finpulse.sentiment.ticker_tagger import ALIASES
 from finpulse.storage.db import init_db, insert_headline, fetch_all
+from config import STOCKS
 
 
 def ingest(per_company=20):
     init_db()
     existing = {r[6] for r in fetch_all() if len(r) > 6 and r[6]}   # URLs already stored
     total = 0
-    for keyword, ticker in ALIASES.items():
+    for ticker, info in STOCKS.items():
         try:
-            headlines = fetch_headlines(keyword.capitalize(), limit=per_company)
+            headlines = fetch_headlines(info["name"], limit=per_company)
         except Exception as e:                       # bad key, rate limit, network -> skip ticker
             print(f"{ticker}: skipped ({e})")
             continue

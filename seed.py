@@ -12,8 +12,8 @@ import random
 from datetime import datetime, timezone, timedelta
 
 from finpulse.sentiment.analyzer import score, label
-from finpulse.sentiment.ticker_tagger import tag, ALIASES
 from finpulse.storage.db import init_db, insert_headline
+from config import STOCKS
 
 POSITIVE = [
     "{n} shares soared on strong quarterly earnings",
@@ -42,19 +42,16 @@ def seed(days=365):
     random.seed(42)                       # reproducible data
     now = datetime.now(timezone.utc)
     rows = 0
-    for keyword, ticker in ALIASES.items():
-        name = keyword.capitalize()       # "apple" -> "Apple" (so ticker_tagger matches)
+    for ticker, info in STOCKS.items():
+        name = info["name"]
         for d in range(days):
             for _ in range(random.randint(1, 2)):       # 1-2 headlines per day
                 pool = random.choices([POSITIVE, NEGATIVE, NEUTRAL], weights=[4, 3, 2])[0]
                 headline = random.choice(pool).format(n=name)
                 ts = (now - timedelta(days=d, hours=random.randint(0, 8))).isoformat()
-                s = score(headline)
-                lab = label(headline)
-                for tk in tag(headline):
-                    insert_headline(headline, tk, s, lab, ts)
-                    rows += 1
-    print(f"seeded {rows} rows across {days} days for {len(set(ALIASES.values()))} tickers")
+                insert_headline(headline, ticker, score(headline), label(headline), ts)
+                rows += 1
+    print(f"seeded {rows} rows across {days} days for {len(STOCKS)} tickers")
 
 
 if __name__ == "__main__":

@@ -21,10 +21,8 @@ from dash import Dash, dcc, html, dash_table, Input, Output
 
 from finpulse.storage.db import fetch_all
 from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence
-from finpulse.sentiment.ticker_tagger import ALIASES
 from fetch_news import ingest
-
-TICKERS = sorted(set(ALIASES.values()))
+from config import TICKERS, STOCKS, yf_symbol, currency
 
 # One self-contained timeframe per option: candle size + a sensible lookback baked in.
 # (Daily is the finest meaningful bucket — news isn't intraday.)
@@ -38,17 +36,8 @@ TIMEFRAMES = {
     "1 Year": 365,
 }
 
-# Each ticker's peers, for the price-comparison chart.
-PEERS = {
-    "AAPL": ["MSFT", "GOOGL"],
-    "MSFT": ["AAPL", "GOOGL"],
-    "GOOGL": ["MSFT", "META"],
-    "META": ["GOOGL", "NFLX"],
-    "AMZN": ["AAPL", "MSFT"],
-    "NVDA": ["MSFT", "AMZN"],
-    "NFLX": ["META", "GOOGL"],
-    "TSLA": ["NVDA", "AAPL"],
-}
+# Each ticker's peers (same sector), for the price-comparison chart.
+PEERS = {t: STOCKS[t]["peers"] for t in TICKERS}
 
 # ----------------------------------------------------------------------------- theme
 BG = "#0e1117"
@@ -109,10 +98,11 @@ def snapshot():
 def latest_price_changes():
     """Latest close + day-over-day % change for every ticker (one batched download)."""
     yf.set_tz_cache_location("D:/yf_cache")
-    data = yf.download(TICKERS, period="5d", interval="1d", progress=False)["Close"]
+    syms = [yf_symbol(t) for t in TICKERS]
+    data = yf.download(syms, period="5d", interval="1d", progress=False)["Close"]
     out = {}
     for t in TICKERS:
-        s = data[t].dropna()
+        s = data[yf_symbol(t)].dropna()
         if len(s) >= 2:
             last, prev = float(s.iloc[-1]), float(s.iloc[-2])
             out[t] = {"price": last, "pct": (last - prev) / prev * 100}
@@ -124,7 +114,8 @@ def market_mood():
     breadth, momentum, stability (inverse volatility), and our own news sentiment.
     Heuristic + educational — NOT the real proprietary MMI."""
     yf.set_tz_cache_location("D:/yf_cache")
-    data = yf.download(TICKERS, period="3mo", interval="1d", progress=False)["Close"].dropna(how="all")
+    syms = [yf_symbol(t) for t in TICKERS]
+    data = yf.download(syms, period="3mo", interval="1d", progress=False)["Close"].dropna(how="all")
     if data.empty or len(data) < 2:                        # yfinance throttled -> neutral default
         return 50.0, {"Breadth": 50.0, "Momentum": 50.0, "Stability": 50.0, "Sentiment": 50.0}
     parts = {}
@@ -230,7 +221,7 @@ def build_home_content():
         if pc:
             pcolor = GREEN if pc["pct"] >= 0 else RED
             price_rows = [
-                html.Div(f"${pc['price']:,.2f}", style={"fontSize": "24px", "fontWeight": "800"}),
+                html.Div(f"{currency(t)}{pc['price']:,.2f}", style={"fontSize": "24px", "fontWeight": "800"}),
                 html.Div(f"{pc['pct']:+.2f}%", style={"fontSize": "16px", "fontWeight": "700", "color": pcolor}),
             ]
         else:
@@ -533,17 +524,18 @@ def build_news_summary(ticker, ohlc):
 
 def build_price_comparison(ticker, days):
     """Normalized %-change line chart of the ticker vs its peers (Tickertape-style)."""
-    symbols = [ticker] + PEERS.get(ticker, [])
+    symbols = [ticker] + PEERS.get(ticker, [])      # internal tickers
+    yfs = [yf_symbol(s) for s in symbols]           # their yfinance symbols
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=max(days, 30))     # at least a month so the comparison is meaningful
 
     def _dl():
         yf.set_tz_cache_location("D:/yf_cache")
-        return yf.download(symbols, start=start.strftime("%Y-%m-%d"),
+        return yf.download(yfs, start=start.strftime("%Y-%m-%d"),
                            end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
                            interval="1d", progress=False)["Close"]
 
-    data = cached(("cmp", tuple(symbols), days), 300, _dl)
+    data = cached(("cmp", tuple(yfs), days), 300, _dl)
     if data is None or len(data) == 0:
         return html.Div("Comparison data temporarily unavailable.",
                         style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
@@ -551,7 +543,8 @@ def build_price_comparison(ticker, days):
     colors = [ACCENT, "#7ee787", "#f778ba", "#ffa657"]
     fig = go.Figure()
     for i, sym in enumerate(symbols):
-        col = data[sym] if sym in getattr(data, "columns", []) else data
+        ysym = yf_symbol(sym)
+        col = data[ysym] if ysym in getattr(data, "columns", []) else data
         s = col.dropna()
         if s.empty:
             continue
@@ -615,7 +608,7 @@ def update_charts(ticker, timeframe, _tick):
         xaxis2_rangeslider_visible=False,
     )
     fig.update_yaxes(title_text="Sentiment", range=[-1, 1], row=1, col=1)
-    fig.update_yaxes(title_text="Price ($)", row=2, col=1)
+    fig.update_yaxes(title_text=f"Price ({currency(ticker)})", row=2, col=1)
     return fig, build_price_comparison(ticker, days), build_news_summary(ticker, ohlc)
 
 

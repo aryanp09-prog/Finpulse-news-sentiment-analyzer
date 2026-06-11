@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 import yfinance as yf
 from finpulse.storage.db import DB_PATH
+from config import yf_symbol
 
 def load_sentiment(ticker):
     conn = sqlite3.connect(DB_PATH)
@@ -25,8 +26,9 @@ def aggregate_sentiment(ticker, window = "1h"):
 
 def load_price(ticker, period = "1mo"):
     yf.set_tz_cache_location("D:/yf_cache")
-    df = yf.download(ticker, period= period, interval = "1d")
-    close = df["Close"][ticker]
+    sym = yf_symbol(ticker)
+    df = yf.download(sym, period= period, interval = "1d")
+    close = df["Close"][sym]
     close.index = close.index.tz_localize("UTC")
     close.name = "price"
     return close
@@ -56,12 +58,13 @@ def load_ohlc(ticker, days=30):
     Always daily candles — the timeframe only changes how far back we look.
     """
     yf.set_tz_cache_location("D:/yf_cache")
+    sym = yf_symbol(ticker)
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+    df = yf.download(sym, start=start.strftime("%Y-%m-%d"),
                      end=(end + timedelta(days=1)).strftime("%Y-%m-%d"), interval="1d")
     if df.empty:                                   # yfinance throttled / no data
         return df
-    ohlc = df.xs(ticker, axis=1, level=1)          # drop the ticker level -> Open/High/Low/Close/Volume
+    ohlc = df.xs(sym, axis=1, level=1)             # drop the ticker level -> Open/High/Low/Close/Volume
     ohlc.index = ohlc.index.tz_localize("UTC")     # daily bars come back tz-naive
     return ohlc
