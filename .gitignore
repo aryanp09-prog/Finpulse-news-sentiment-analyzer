@@ -10,7 +10,9 @@ venv/
 # Local data / caches
 yf_cache/
 *.db
+*.db.bak
 *.sqlite3
+.cache/          # HuggingFace/torch model cache (FinBERT, ~1.5GB)
 
 # Environment secrets (NewsAPI key later, etc.)
 .env

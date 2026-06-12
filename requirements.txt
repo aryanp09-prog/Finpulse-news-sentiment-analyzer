@@ -9,3 +9,7 @@ vaderSentiment>=3.3.2 # sentiment analysis (works out of the box)
 dash>=2.16            # interactive dashboard
 plotly>=5.20          # charts used by Dash
 requests>=2.31        # dashboard -> API calls
+feedparser>=6.0       # RSS sources (Google News, Economic Times, CNBC, Moneycontrol)
+transformers>=4.40    # FinBERT (ProsusAI/finbert) — finance-trained sentiment
+torch>=2.0            # FinBERT backend. Install the CPU build to save disk:
+                      #   pip install torch --index-url https://download.pytorch.org/whl/cpu

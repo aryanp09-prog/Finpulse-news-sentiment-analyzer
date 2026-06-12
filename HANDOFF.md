@@ -53,44 +53,40 @@ FastAPI REST API and a Dash/Plotly dashboard.
   merges NewsAPI + Google RSS per ticker + Moneycontrol (tagged), deduped by URL AND title.
   Coverage jumped 107 -> 309 headlines; every ticker now has 20+ (DMART fixed: 0 -> 20).
 
-**In progress (file · function · what's half-done):**
-- STEP 2 FULLY DONE (logic + UI). Two small UI tweaks queued for Codex below; FinBERT (Step 3) after.
+**Recent work (2026-06-12 — newest first):**
+- STEP 3 FinBERT ✅ DONE. `analyzer.py` rewritten: VADER kept as fallback; `ProsusAI/finbert`
+  lazy-loaded behind the SAME `score()/label()` interface (compound = P(pos)-P(neg), -1..+1);
+  `SENTIMENT_ENGINE` env toggle (default "finbert", "vader" to force); any FinBERT error -> VADER
+  (never crashes). Installed torch(CPU)+transformers+model to **D:** with caches redirected off the
+  near-full C: (HF_HOME/PIP_CACHE_DIR/TMP -> `d:\finance_news_project\.cache\*`); C: moved ~120MB.
+  `analyzer.py` sets HF_HOME itself so it's self-contained. `rescore.py` (new, repo root) backs up
+  the DB then re-scores all rows — ran it on 394 headlines (neutral 159->72, pos 178->231, neg 57->91).
+  requirements += feedparser/transformers/torch; .gitignore += *.db.bak, .cache/.
+- More RSS: `news_rss.py` += `fetch_economictimes`/`fetch_cnbc`/`fetch_reuters` (Reuters via Google
+  News, its own RSS is dead) over a shared `_fetch_feeds` helper; `fetch_news.py` runs all 4
+  category feeds (MC/ET/CNBC/Reuters) through one tag-and-store loop. Coverage 309 -> 394.
+- Timezone labels: `app._news_row` now shows each headline in ITS market's local tz via
+  `_local_time` + `MARKET_TZ` (IN->IST, US->ET, else UTC). Storage stays UTC.
 
-**Next steps (CODEX — two UI tweaks, both in `finpulse/dashboard/app.py`):**
+**Next steps (Step 4 — Live data; biggest/most complex, do only when user says go):**
+- **Fyers API** (user HAS account) WebSocket -> live Indian ticks (daily OAuth session token).
+- **Finnhub** free WebSocket -> live US ticks. Build a `price_source(ticker)` router (IN->Fyers,
+  US->Finnhub/yfinance), common UTC OHLC shape, graceful fallback to yfinance if a feed/token fails.
 
-TASK 1 — Remove the pure-sentiment "RECOMMENDATION" panel (the Fundamentals+Sentiment VERDICT replaces it):
-- In `build_news_summary`, delete the recommendation computation
-  (`rec, rec_score, comps = recommendation(avg, price_move)` and `rec_color = REC_COLORS[rec]`)
-  and remove the recommendation panel from the returned Div (the box showing "RECOMMENDATION" / the
-  big rec word / "Composite score ..."). KEEP the VERDICT panel and the Fundamentals panel.
-  (The now-unused `recommendation` / `REC_COLORS` import can stay; harmless.)
-
-TASK 2 — Make the headline stats reflect the SELECTED TIMEFRAME (not a fixed last-25):
-- Pass the timeframe label in: in the `update_charts` callback change the call to
-  `build_news_summary(ticker, ohlc, timeframe)`, and add a `timeframe` param to `build_news_summary`.
-- Inside, filter the ticker's headlines to the chart's window:
-  `df = df[df["timestamp"] >= ohlc.index.min()]`  (df timestamps are tz-aware UTC; ohlc.index is UTC).
-  Compute total / pos / neg / neu / avg AND most_pos / most_neg from THIS windowed df
-  (replace `recent = df.head(25)` with `recent = df`).
-- Change the header line "{total} recent headlines ..." to "{total} headlines in the {timeframe} window ...".
-- GUARD: if the windowed df is empty, return a small "No headlines for {ticker} in the {timeframe}
-  window." card (so it doesn't crash on idxmax of an empty frame).
-
-Verify with the smoke-test gate (commands.txt section 7). Do NOT commit or push — leave for review.
-
-**After Codex (Step 3 — FinBERT):** replace VADER in `analyzer.py` with FinBERT via the HuggingFace
-Inference API (hosted, to avoid the C: disk hit). Map probs -> -1..+1 so `score()`/`label()` stay
-drop-in; keep VADER fallback; re-run `python fetch_news.py` to re-score.
+**Small optional cleanups (not blocking):**
+- Widen FinBERT neutral band ±0.05 -> ±0.15 in `analyzer.label()` (borderline e.g. "bank holiday"
+  -0.09 currently reads negative).
+- DB doesn't persist a `source` column -> can't do per-source analytics / source badges yet.
 
 **Do NOT change:**
 - The `config.py` dict shape (other files depend on the keys: name, query, yf, currency, peers...).
-- The UTC handling anywhere (`tz_localize` / `to_datetime(..., utc=True)`).
-- The `recommendation()` weights/thresholds (they're the documented methodology) unless asked.
+- The UTC handling in STORAGE/aggregation (`tz_localize` / `to_datetime(..., utc=True)`). Display-time
+  tz conversion (IST/ET in `_local_time`) is fine and intended.
+- The `score()/label()` interface or the VADER fallback in `analyzer.py`.
 - The decoupling — sources must return the common `{text, source, timestamp, url}` dict.
 
 **Open questions (do NOT guess — leave for the human):**
-- Should we also add Moneycontrol/ET RSS (category-level), or is Google News RSS enough?
-- Live data (Fyers for Indian, Finnhub/yfinance for US) is a separate later task — not now.
+- Live data (Fyers / Finnhub) — separate later task; start only on explicit go.
 
 ---
 
