@@ -54,18 +54,33 @@ FastAPI REST API and a Dash/Plotly dashboard.
   Coverage jumped 107 -> 309 headlines; every ticker now has 20+ (DMART fixed: 0 -> 20).
 
 **In progress (file · function · what's half-done):**
-- Nothing half-done. STEP 2 FULLY DONE (logic + UI): aggregator has load_fundamentals /
-  fundamental_score (now returns raw fundamentals too) / verdict. `app.build_news_summary` renders
-  a Verdict panel (Fundamentals + Sentiment) + a Fundamentals panel (P/E, P/B, ROE, D/E, EPS + score),
-  cached. Smoke tests pass.
+- STEP 2 FULLY DONE (logic + UI). Two small UI tweaks queued for Codex below; FinBERT (Step 3) after.
 
-**Next steps (Step 3 — FinBERT, finance-trained sentiment):**
-1. Replace/augment VADER in `finpulse/sentiment/analyzer.py` with FinBERT via the HuggingFace
-   Inference API (hosted — avoids the C: disk hit of transformers+torch). Model `ProsusAI/finbert`.
-   Put the HF token in `.env` (e.g. HF_TOKEN). Keep VADER as a fallback if the API fails.
-2. Map FinBERT positive/negative probabilities -> a -1..+1 compound so `score()`/`label()` stay a
-   drop-in (nothing downstream changes).
-3. Re-run `python fetch_news.py` to re-score stored headlines with FinBERT.
+**Next steps (CODEX — two UI tweaks, both in `finpulse/dashboard/app.py`):**
+
+TASK 1 — Remove the pure-sentiment "RECOMMENDATION" panel (the Fundamentals+Sentiment VERDICT replaces it):
+- In `build_news_summary`, delete the recommendation computation
+  (`rec, rec_score, comps = recommendation(avg, price_move)` and `rec_color = REC_COLORS[rec]`)
+  and remove the recommendation panel from the returned Div (the box showing "RECOMMENDATION" / the
+  big rec word / "Composite score ..."). KEEP the VERDICT panel and the Fundamentals panel.
+  (The now-unused `recommendation` / `REC_COLORS` import can stay; harmless.)
+
+TASK 2 — Make the headline stats reflect the SELECTED TIMEFRAME (not a fixed last-25):
+- Pass the timeframe label in: in the `update_charts` callback change the call to
+  `build_news_summary(ticker, ohlc, timeframe)`, and add a `timeframe` param to `build_news_summary`.
+- Inside, filter the ticker's headlines to the chart's window:
+  `df = df[df["timestamp"] >= ohlc.index.min()]`  (df timestamps are tz-aware UTC; ohlc.index is UTC).
+  Compute total / pos / neg / neu / avg AND most_pos / most_neg from THIS windowed df
+  (replace `recent = df.head(25)` with `recent = df`).
+- Change the header line "{total} recent headlines ..." to "{total} headlines in the {timeframe} window ...".
+- GUARD: if the windowed df is empty, return a small "No headlines for {ticker} in the {timeframe}
+  window." card (so it doesn't crash on idxmax of an empty frame).
+
+Verify with the smoke-test gate (commands.txt section 7). Do NOT commit or push — leave for review.
+
+**After Codex (Step 3 — FinBERT):** replace VADER in `analyzer.py` with FinBERT via the HuggingFace
+Inference API (hosted, to avoid the C: disk hit). Map probs -> -1..+1 so `score()`/`label()` stay
+drop-in; keep VADER fallback; re-run `python fetch_news.py` to re-score.
 
 **Do NOT change:**
 - The `config.py` dict shape (other files depend on the keys: name, query, yf, currency, peers...).
