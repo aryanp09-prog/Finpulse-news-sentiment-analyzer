@@ -48,21 +48,24 @@ FastAPI REST API and a Dash/Plotly dashboard.
 - Redesigned the home "Tracked Tickers" section in `app.build_home_content`: responsive CSS-grid
   of equal-height cards, an IN/US market chip, a labeled sentiment row (Positive/Neutral/Negative
   + score), a prominent amber "Disagreement" divergence flag, and a legend explaining it.
+- STEP 1 DONE — multi-source news: added `finpulse/ingestion/news_rss.py` (Google News RSS
+  `fetch_rss` + Moneycontrol `fetch_moneycontrol`, via feedparser); `fetch_news.ingest()` now
+  merges NewsAPI + Google RSS per ticker + Moneycontrol (tagged), deduped by URL AND title.
+  Coverage jumped 107 -> 309 headlines; every ticker now has 20+ (DMART fixed: 0 -> 20).
 
 **In progress (file · function · what's half-done):**
-- News coverage is thin/zero for some Indian tickers (DMART = 0, ABB = 1, SIEMENS = 2, TRENT = 3).
-  NewsAPI free tier alone isn't enough for Indian names.
+- Nothing half-done. Step 1 is complete; next is Step 2 (fundamentals + verdict matrix).
 
-**Next steps, in order (with exact file:function):**
-1. Create `finpulse/ingestion/news_rss.py` with `fetch_rss(query, limit=20)` that queries
-   **Google News RSS** (`https://news.google.com/rss/search?q=<query>&hl=en-IN&gl=IN&ceid=IN:en`)
-   using `feedparser` (run `pip install feedparser` first). Return the SAME dict shape as
-   `news_api.fetch_headlines`: `{text, source, timestamp(ISO/UTC), url}`. Normalize the RSS
-   RFC-822 date to ISO-8601 UTC.
-2. In `fetch_news.ingest()`: for each ticker, call BOTH `news_api.fetch_headlines(query)` and
-   `news_rss.fetch_rss(query)`, concatenate, and dedupe by URL (the existing `existing` set) AND
-   by near-duplicate title. Keep the per-ticker "N new" print.
-3. Run `python fetch_news.py` and confirm DMART/ABB/SIEMENS/TRENT now get headlines.
+**Next steps, in order (Step 2 — fundamentals + verdict matrix, THE differentiator):**
+1. Fundamentals loader from yfinance `yf.Ticker(yf_symbol(t)).info`: trailingPE, priceToBook,
+   returnOnEquity, debtToEquity, trailingEps, returnOnAssets. NOT Fyers (no fundamentals). Cache it.
+2. Fundamental score 1-100 in aggregator: weighted + normalized; industry PE = avg PE of the
+   sector peers (config); GRACEFUL missing-data handling (re-normalize weights to 100%, min-2-metric
+   threshold else "insufficient data", show coverage "based on N of 5", never fabricate).
+3. Verdict matrix fn in aggregator (pure logic): strong fund + weak sentiment -> Overreaction/Buy;
+   weak fund + very high sentiment -> Hype Trap/Sell; strong fund + high sentiment -> Momentum/Strong
+   Buy; fundamentals N/A -> sentiment-only fallback. Document methodology; keep disclaimer.
+4. Surface fundamental score + verdict in `app.build_news_summary` (below the recommendation).
 
 **Do NOT change:**
 - The `config.py` dict shape (other files depend on the keys: name, query, yf, currency, peers...).
