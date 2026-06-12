@@ -23,7 +23,7 @@ from finpulse.storage.db import fetch_all
 from finpulse.aggregation.aggregator import (aggregate_sentiment, load_ohlc, detect_divergence,
                                              recommendation, fundamental_score, verdict)
 from fetch_news import ingest
-from config import TICKERS, STOCKS, yf_symbol, currency, peers
+from config import TICKERS, STOCKS, yf_symbol, currency, peers, logo_url, display_name
 
 # One self-contained timeframe per option: candle size + a sensible lookback baked in.
 # (Daily is the finest meaningful bucket — news isn't intraday.)
@@ -61,6 +61,38 @@ CARD_STYLE = {
     "background": PANEL, "border": f"1px solid {BORDER}", "borderRadius": "12px",
     "padding": "18px", "minWidth": "150px", "flex": "1",
 }
+
+
+# ----------------------------------------------------------------------------- logos
+def logo_chip(ticker, size=34):
+    """Company logo in a white rounded chip (white pad so dark logos stay visible)."""
+    return html.Img(src=logo_url(ticker), alt=ticker, style={
+        "width": f"{size}px", "height": f"{size}px", "borderRadius": "9px",
+        "background": "#fff", "padding": "4px", "objectFit": "contain",
+        "boxShadow": "0 1px 4px rgba(0,0,0,0.45)", "flexShrink": "0", "boxSizing": "border-box",
+    })
+
+
+def market_badge(ticker):
+    return html.Span(STOCKS[ticker]["market"], style={
+        "fontSize": "10px", "fontWeight": "700", "color": MUTED,
+        "border": f"1px solid {BORDER}", "borderRadius": "6px", "padding": "1px 6px",
+    })
+
+
+def ticker_header(ticker):
+    """Logo + company name + symbol + market badge — used on the analytics page (auto-updates)."""
+    return html.Div([
+        logo_chip(ticker, size=48),
+        html.Div([
+            html.Div(display_name(ticker), style={"fontSize": "20px", "fontWeight": "800"}),
+            html.Div([
+                html.Span(ticker, style={"color": ACCENT, "fontWeight": "700", "fontSize": "13px"}),
+                html.Span(STOCKS[ticker]["sector"], style={"color": MUTED, "fontSize": "12px"}),
+            ], style={"display": "flex", "gap": "10px", "alignItems": "center", "marginTop": "2px"}),
+        ]),
+        html.Div(market_badge(ticker), style={"marginLeft": "auto", "alignSelf": "flex-start"}),
+    ], style={"display": "flex", "gap": "14px", "alignItems": "center", "marginBottom": "14px"})
 
 
 # ----------------------------------------------------------------------------- caching
@@ -259,10 +291,16 @@ def build_home_content():
 
         card = html.Div([
             html.Div([
-                html.Span(t, style={"fontSize": "17px", "fontWeight": "800"}),
-                html.Span(market, style={"fontSize": "10px", "fontWeight": "700", "color": MUTED,
-                                         "border": f"1px solid {BORDER}", "borderRadius": "6px",
-                                         "padding": "1px 6px"}),
+                html.Div([
+                    logo_chip(t, size=34),
+                    html.Div([
+                        html.Span(t, style={"fontSize": "16px", "fontWeight": "800", "display": "block"}),
+                        html.Span(display_name(t), style={
+                            "fontSize": "11px", "color": MUTED, "display": "block", "whiteSpace": "nowrap",
+                            "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "118px"}),
+                    ]),
+                ], style={"display": "flex", "gap": "10px", "alignItems": "center", "minWidth": 0}),
+                market_badge(t),
             ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}),
             *price_block,
             html.Div([
@@ -272,7 +310,7 @@ def build_home_content():
             ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
                       "marginTop": "12px", "paddingTop": "10px", "borderTop": f"1px solid {BORDER}"}),
             *flag,
-        ], style={**CARD_STYLE, "minWidth": "unset", "width": "100%"})
+        ], className="ticker-card", style={**CARD_STYLE, "minWidth": "unset", "width": "100%"})
         cards.append(dcc.Link(card, href=f"/analytics?ticker={t}",
                               style={"textDecoration": "none", "color": "inherit", "display": "flex"}))
 
@@ -386,6 +424,8 @@ def analytics_page(default_ticker=None):
         html.P("Choose a timeframe. Auto-refreshes every 60s. "
                "Drag across either panel to pan/zoom; double-click to reset.",
                style={"color": MUTED, "fontSize": "12px"}),
+        html.Div(ticker_header(ticker_value), id="ticker-logo",
+                 style={**CARD_STYLE, "flex": "unset", "padding": "14px 18px", "marginBottom": "14px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
         html.Div(id="price-comparison"),
         html.Div(id="news-summary"),
@@ -762,6 +802,12 @@ def build_price_comparison(ticker, days):
                  style={"color": MUTED, "fontSize": "12px", "marginBottom": "6px"}),
         dcc.Graph(figure=fig, config={"displayModeBar": False}),
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
+
+
+@app.callback(Output("ticker-logo", "children"), Input("ticker-dropdown", "value"))
+def update_ticker_header(ticker):
+    # Separate from update_charts so the logo header swaps instantly and can't break the charts.
+    return ticker_header(ticker)
 
 
 @app.callback(

@@ -1,0 +1,38 @@
+/* FinPulse — modern UI polish.
+   Additive only: inline styles still drive the base dark theme. This file just adds
+   smooth interactions (hover, transitions, scrollbar) that inline styles can't express. */
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tracked-ticker cards: lift + accent glow on hover so they feel clickable */
+.ticker-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  height: 100%;
+}
+.ticker-card:hover {
+  transform: translateY(-3px);
+  border-color: #58a6ff !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* Keep small favicons crisp */
+img[alt] {
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* Nav links: subtle hover */
+a { transition: color 0.12s ease, opacity 0.12s ease; }
+
+/* Slimmer, themed scrollbar (WebKit/Chromium) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0e1117; }
+::-webkit-scrollbar-thumb { background: #2a3038; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #3a424d; }
+
+/* Buttons feel responsive */
+button { transition: transform 0.1s ease, filter 0.1s ease; }
+button:hover { filter: brightness(1.08); }
+button:active { transform: scale(0.97); }

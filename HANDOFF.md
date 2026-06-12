@@ -53,7 +53,12 @@ FastAPI REST API and a Dash/Plotly dashboard.
   merges NewsAPI + Google RSS per ticker + Moneycontrol (tagged), deduped by URL AND title.
   Coverage jumped 107 -> 309 headlines; every ticker now has 20+ (DMART fixed: 0 -> 20).
 
-**Recent work (2026-06-12 — newest first):**
+**Recent work (newest first):**
+- UI: company **logos** added (Google favicon via `config.logo_url`; `domain` field per ticker).
+  Home cards now show logo + company name (`app.logo_chip`/`market_badge`); Analytics has a
+  logo+name+sector header (`app.ticker_header`) that auto-swaps via a SEPARATE `update_ticker_header`
+  callback (kept off `update_charts` so charts can't break). Modern polish in new
+  `finpulse/dashboard/assets/custom.css` (card hover-lift, transitions, scrollbar) — additive only.
 - STEP 3 FinBERT ✅ DONE. `analyzer.py` rewritten: VADER kept as fallback; `ProsusAI/finbert`
   lazy-loaded behind the SAME `score()/label()` interface (compound = P(pos)-P(neg), -1..+1);
   `SENTIMENT_ENGINE` env toggle (default "finbert", "vader" to force); any FinBERT error -> VADER
