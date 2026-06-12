@@ -20,9 +20,10 @@ from plotly.subplots import make_subplots
 from dash import Dash, dcc, html, dash_table, Input, Output
 
 from finpulse.storage.db import fetch_all
-from finpulse.aggregation.aggregator import aggregate_sentiment, load_ohlc, detect_divergence, recommendation
+from finpulse.aggregation.aggregator import (aggregate_sentiment, load_ohlc, detect_divergence,
+                                             recommendation, fundamental_score, verdict)
 from fetch_news import ingest
-from config import TICKERS, STOCKS, yf_symbol, currency
+from config import TICKERS, STOCKS, yf_symbol, currency, peers
 
 # One self-contained timeframe per option: candle size + a sensible lookback baked in.
 # (Daily is the finest meaningful bucket — news isn't intraday.)
@@ -535,6 +536,51 @@ def build_news_summary(ticker, ohlc):
     rec, rec_score, comps = recommendation(avg, price_move)
     rec_color = REC_COLORS[rec]
 
+    # --- fundamentals + verdict (fundamentals x sentiment) ---
+    fscore, fcomps, fused, ftotal, fraw = cached(
+        ("fund", ticker), 600, lambda: fundamental_score(ticker, peers(ticker)))
+    v_label, v_action, v_expl = verdict(fscore, avg)
+    v_color = GREEN if "Buy" in v_action else RED if "Sell" in v_action else AMBER
+
+    def _metric(lbl, val):
+        return html.Div([html.Div(lbl, style={"fontSize": "10px", "color": MUTED}),
+                         html.Div(val, style={"fontSize": "15px", "fontWeight": "700"})],
+                        style={"background": BG, "border": f"1px solid {BORDER}", "borderRadius": "8px",
+                               "padding": "8px 12px", "textAlign": "center"})
+    metric_boxes = []
+    if fraw.get("pe"):
+        metric_boxes.append(_metric("P/E", f"{fraw['pe']:.1f}"))
+    if fraw.get("pb"):
+        metric_boxes.append(_metric("P/B", f"{fraw['pb']:.1f}"))
+    if fraw.get("roe") is not None:
+        metric_boxes.append(_metric("ROE", f"{fraw['roe'] * 100:.1f}%"))
+    if fraw.get("debt") is not None:
+        metric_boxes.append(_metric("D/E", f"{fraw['debt'] / 100:.2f}x"))
+    if fraw.get("eps") is not None:
+        metric_boxes.append(_metric("EPS", f"{fraw['eps']:.1f}"))
+    fscore_txt = f"{fscore:.0f}/100" if fscore is not None else "Insufficient data"
+
+    verdict_panel = html.Div([
+        html.Div("VERDICT  —  Fundamentals + Sentiment",
+                 style={"fontSize": "11px", "color": MUTED, "letterSpacing": "1px"}),
+        html.Div(f"{v_label}  →  {v_action}",
+                 style={"fontSize": "26px", "fontWeight": "800", "color": v_color}),
+        html.Div(v_expl, style={"fontSize": "12.5px", "color": MUTED, "marginTop": "6px", "lineHeight": "1.5"}),
+    ], style={"background": "#1f2630", "border": f"1px solid {v_color}", "borderRadius": "10px",
+              "padding": "14px 18px", "marginBottom": "12px"})
+
+    fund_panel = html.Div([
+        html.Div([
+            html.Span("Fundamentals", style={"fontSize": "13px", "fontWeight": "700"}),
+            html.Span(f"Score {fscore_txt}", style={"fontSize": "13px", "fontWeight": "800", "color": ACCENT}),
+        ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "10px"}),
+        html.Div(metric_boxes, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"}),
+        html.Div(f"based on {fused} of {ftotal} metrics"
+                 + (f": {', '.join(fcomps.keys())}" if fcomps else ""),
+                 style={"fontSize": "11px", "color": MUTED, "marginTop": "8px"}),
+    ], style={"background": "#1f2630", "border": f"1px solid {BORDER}", "borderRadius": "10px",
+              "padding": "14px 18px", "marginBottom": "12px"})
+
     most_pos = recent.loc[recent["score"].idxmax()]
     most_neg = recent.loc[recent["score"].idxmin()]
 
@@ -563,6 +609,8 @@ def build_news_summary(ticker, ohlc):
         ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
                   "background": "#1f2630", "border": f"1px solid {rec_color}", "borderRadius": "10px",
                   "padding": "14px 18px", "marginBottom": "12px"}),
+        verdict_panel,
+        fund_panel,
         html.Div(read, style={"color": MUTED, "fontSize": "12.5px", "lineHeight": "1.5", "marginBottom": "14px"}),
         html.Div([html.Span("Most positive: ", style={"color": GREEN, "fontWeight": "700"}), link(most_pos)],
                  style={"marginBottom": "6px"}),
