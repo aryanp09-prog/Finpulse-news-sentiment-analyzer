@@ -98,49 +98,180 @@ def load_ohlc(ticker, days=30):
 
 
 # --------------------------------------------------------------------------- fundamentals
+BASE_FUNDAMENTAL_WEIGHTS = {
+    "pe_vs_industry": 30,
+    "pb_vs_industry": 20,
+    "roe": 30,
+    "debt_to_equity": 20,
+}
+
+FUNDAMENTAL_LABELS = {
+    "pe_vs_industry": "PE vs industry",
+    "pb_vs_industry": "PB vs industry",
+    "roe": "ROE",
+    "debt_to_equity": "Debt",
+}
+
+
+def _to_float(value):
+    """Best-effort numeric parser for provider fields that may arrive as strings or NA."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "").replace("%", "").replace("₹", "").replace("$", "")
+        if cleaned.upper() in {"", "NA", "N/A", "NONE", "NULL", "--", "-"}:
+            return None
+        value = cleaned
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if pd.notna(num) else None
+
+
+def _is_valid_number(value):
+    """Return True when a field is a real numeric value, including zero."""
+    return _to_float(value) is not None
+
+
+def _clamp(value, low=0.0, high=100.0):
+    """Clamp a score into the supported 0-100 range."""
+    return max(low, min(high, value))
+
+
+def _first_valid(*values):
+    """Return the first parseable numeric value from a provider fallback list."""
+    for value in values:
+        parsed = _to_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_dividend_yield(raw_dividend, face_value, current_price, annual_dividend=None):
+    """Return corrected dividend yield as (decimal_fraction, display_string).
+
+    Some Indian-market sources expose dividend as a rate on face value (for example
+    175% on a Rs 1 face value), not as yield on market price. When the raw percentage
+    is greater than 20, treat it as a face-value rate and convert it to real yield:
+
+        ((dividend_rate_pct / 100) * face_value) / current_market_price * 100
+
+    If face value is unavailable, fall back to annual absolute dividend payout when
+    provided. If the required price input is missing, return a safe NA display.
+    """
+    raw = _to_float(raw_dividend)
+    face = _to_float(face_value)
+    price = _to_float(current_price)
+    annual = _to_float(annual_dividend)
+
+    yield_pct = None
+    if raw is not None:
+        if raw > 20:
+            if price is not None and price > 0 and face is not None and face > 0:
+                annual_cash_dividend = (raw / 100.0) * face
+                yield_pct = annual_cash_dividend / price * 100.0
+            elif price is not None and price > 0 and annual is not None and annual >= 0:
+                yield_pct = annual / price * 100.0
+        elif raw <= 1:
+            yield_pct = raw * 100.0
+        else:
+            yield_pct = raw
+    elif price is not None and price > 0 and annual is not None and annual >= 0:
+        yield_pct = annual / price * 100.0
+
+    if yield_pct is None:
+        return None, "NA"
+    return yield_pct / 100.0, f"{yield_pct:.2f}%"
+
+
 def load_fundamentals(ticker):
-    """Raw fundamentals from yfinance .info (fields may be missing -> None)."""
+    """Load and normalize raw fundamentals from yfinance.
+
+    Provider fields may be missing or arrive in different units. Dividend yield is
+    normalized to actual market-price yield and exposed as both a decimal fraction
+    and a ready-to-display string.
+    """
     yf.set_tz_cache_location("D:/yf_cache")
-    info = yf.Ticker(yf_symbol(ticker)).info
+    try:
+        info = yf.Ticker(yf_symbol(ticker)).info
+    except Exception:
+        info = {}
+
+    current_price = _first_valid(info.get("currentPrice"), info.get("regularMarketPrice"),
+                                 info.get("previousClose"), info.get("regularMarketPreviousClose"))
+    face_value = _to_float(info.get("faceValue"))
+    dividend_rate = _first_valid(info.get("dividendYield"), info.get("trailingAnnualDividendYield"))
+    annual_dividend = _first_valid(info.get("dividendRate"), info.get("trailingAnnualDividendRate"))
+    dividend_yield, dividend_yield_display = _parse_dividend_yield(
+        dividend_rate, face_value, current_price, annual_dividend)
+
     return {
+        "market_cap": info.get("marketCap"),
+        "current_price": current_price,
         "pe": info.get("trailingPE"),
         "pb": info.get("priceToBook"),
         "roe": info.get("returnOnEquity"),     # fraction, e.g. 0.18
         "debt": info.get("debtToEquity"),      # yfinance gives a %-style number, e.g. 120 == 1.2x
         "eps": info.get("trailingEps"),
+        "dividend_yield": dividend_yield,
+        "dividend_yield_display": dividend_yield_display,
+        "annual_dividend": annual_dividend,
+        "book_value": info.get("bookValue"),
+        "face_value": face_value,
     }
 
 
 def fundamental_score(ticker, peers):
-    """1-100 fundamental score, graceful with missing data.
+    """Calculate a 1-100 fundamental score with dynamic weight redistribution.
 
     Relative metrics (PE, PB) are scored vs the sector-peer average; absolute (ROE, Debt).
-    Only available metrics are used and their weights are re-normalised to sum to 100%.
-    Returns (score|None, breakdown{name: (0-100, weight)}, n_used, n_total).
+    Only valid metrics are used. Their base weights are scaled proportionally so the
+    available metrics always sum to exactly 100%; an NA debt metric for a bank therefore
+    does not cap the best possible score at 80.
+
+    Returns:
+        (score|None, breakdown{name: (score_0_100, active_weight_pct)}, n_used, n_total, raw)
     """
     f = load_fundamentals(ticker)
     peer_funds = [load_fundamentals(p) for p in peers]
 
     def industry_avg(metric):
-        vals = [pf[metric] for pf in peer_funds + [f] if pf.get(metric)]
+        vals = [_to_float(pf.get(metric)) for pf in peer_funds + [f] if _is_valid_number(pf.get(metric))]
         return sum(vals) / len(vals) if vals else None
 
     ind_pe, ind_pb = industry_avg("pe"), industry_avg("pb")
-    comps = {}                                              # name -> (score 0-100, weight)
-    if f["pe"] and ind_pe:                                  # cheaper than peers = better
-        comps["PE vs industry"] = (max(0.0, min(100.0, 50 - (f["pe"] / ind_pe - 1) * 100)), 30)
-    if f["pb"] and ind_pb:                                  # cheaper than peers = better
-        comps["PB vs industry"] = (max(0.0, min(100.0, 50 - (f["pb"] / ind_pb - 1) * 100)), 20)
-    if f["roe"] is not None:                                # higher = better (0.25 ROE -> 100)
-        comps["ROE"] = (max(0.0, min(100.0, f["roe"] * 400)), 30)
-    if f["debt"] is not None:                               # lower = better (D/E 200% -> 0)
-        comps["Debt"] = (max(0.0, min(100.0, 100 - f["debt"] / 2)), 20)
+    f["industry_pe"] = ind_pe
+    f["industry_pb"] = ind_pb
 
-    if len(comps) < 2:                                      # too little data to be meaningful
-        return None, comps, len(comps), 4, f
-    total_w = sum(w for _, w in comps.values())
-    score = sum(s * w for s, w in comps.values()) / total_w
-    return score, comps, len(comps), 4, f
+    raw_scores = {}
+    pe = _to_float(f.get("pe"))
+    pb = _to_float(f.get("pb"))
+    roe = _to_float(f.get("roe"))
+    debt = _to_float(f.get("debt"))
+
+    if pe is not None and pe > 0 and ind_pe is not None and ind_pe > 0:
+        raw_scores["pe_vs_industry"] = _clamp(50 - (pe / ind_pe - 1) * 100)
+    if pb is not None and pb > 0 and ind_pb is not None and ind_pb > 0:
+        raw_scores["pb_vs_industry"] = _clamp(50 - (pb / ind_pb - 1) * 100)
+    if roe is not None:
+        raw_scores["roe"] = _clamp(roe * 400)                # higher = better (0.25 ROE -> 100)
+    if debt is not None:
+        raw_scores["debt_to_equity"] = _clamp(100 - debt / 2) # lower = better (D/E 200% -> 0)
+
+    total_valid_weight = sum(BASE_FUNDAMENTAL_WEIGHTS[key] for key in raw_scores)
+    if len(raw_scores) < 2 or total_valid_weight <= 0:        # too little data to be meaningful
+        comps = {FUNDAMENTAL_LABELS[key]: (score, 0.0) for key, score in raw_scores.items()}
+        return None, comps, len(raw_scores), len(BASE_FUNDAMENTAL_WEIGHTS), f
+
+    comps = {}
+    weighted_score = 0.0
+    for key, raw_score in raw_scores.items():
+        active_weight = BASE_FUNDAMENTAL_WEIGHTS[key] / (total_valid_weight / 100.0)
+        comps[FUNDAMENTAL_LABELS[key]] = (raw_score, active_weight)
+        weighted_score += raw_score * (active_weight / 100.0)
+
+    return _clamp(weighted_score), comps, len(raw_scores), len(BASE_FUNDAMENTAL_WEIGHTS), f
 
 
 def verdict(fund_score, avg_sentiment):

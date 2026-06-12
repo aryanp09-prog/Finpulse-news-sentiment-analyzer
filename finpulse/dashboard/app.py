@@ -36,6 +36,7 @@ TIMEFRAMES = {
     "6 Months": 180,
     "1 Year": 365,
 }
+NEWS_TIMEFRAMES = {"All time": None, **TIMEFRAMES}
 
 # Each ticker's peers (same sector), for the price-comparison chart.
 PEERS = {t: STOCKS[t]["peers"] for t in TICKERS}
@@ -420,15 +421,30 @@ def _news_row(r):
     })
 
 
-def build_news_feed(ticker="All", sentiment="All"):
-    df = headlines_df()
-    if df.empty:
-        return html.Div("No news ingested yet — run fetch_news.py or click 'Fetch latest news'.",
-                        style={"color": MUTED, "padding": "24px"})
+def _filter_news_df(df, ticker="All", sentiment="All", timeframe="All time"):
     if ticker and ticker != "All":
         df = df[df["ticker"] == ticker]
     if sentiment and sentiment != "All":
         df = df[df["label"] == sentiment]
+    days = NEWS_TIMEFRAMES.get(timeframe)
+    if days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        df = df[df["timestamp"] >= cutoff]
+    return df
+
+
+def _news_count_text(ticker="All", sentiment="All", timeframe="All time"):
+    df = _filter_news_df(headlines_df(), ticker, sentiment, timeframe)
+    window = "all time" if timeframe == "All time" else f"the {timeframe} window"
+    return f"{len(df)} processed headlines — {window}, newest first."
+
+
+def build_news_feed(ticker="All", sentiment="All", timeframe="All time"):
+    df = headlines_df()
+    if df.empty:
+        return html.Div("No news ingested yet — run fetch_news.py or click 'Fetch latest news'.",
+                        style={"color": MUTED, "padding": "24px"})
+    df = _filter_news_df(df, ticker, sentiment, timeframe)
     if df.empty:
         return html.Div("No headlines match this filter.", style={"color": MUTED, "padding": "24px"})
     rows = [_news_row(r) for _, r in df.head(150).iterrows()]
@@ -436,11 +452,10 @@ def build_news_feed(ticker="All", sentiment="All"):
 
 
 def news_page():
-    total = len(headlines_df())
     drop = {"width": "190px", "color": "#000"}
     return html.Div([
         html.H2("All News"),
-        html.P(f"{total} processed headlines — newest first.", style={"color": MUTED}),
+        html.P(_news_count_text(), id="news-count", style={"color": MUTED}),
         html.Div([
             dcc.Dropdown(id="news-ticker", clearable=False, value="All", style=drop,
                          options=[{"label": "All tickers", "value": "All"}]
@@ -450,7 +465,9 @@ def news_page():
                                   {"label": "Positive", "value": "positive"},
                                   {"label": "Neutral", "value": "neutral"},
                                   {"label": "Negative", "value": "negative"}]),
-        ], style={"display": "flex", "gap": "12px", "marginBottom": "16px"}),
+            dcc.Dropdown(id="news-timeframe", clearable=False, value="All time", style=drop,
+                         options=[{"label": k, "value": k} for k in NEWS_TIMEFRAMES]),
+        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "16px"}),
         html.Div(id="news-list", children=build_news_feed()),
     ])
 
@@ -489,24 +506,31 @@ def refresh_news(n_clicks):
 
 
 @app.callback(
+    Output("news-count", "children"),
     Output("news-list", "children"),
     Input("news-ticker", "value"),
     Input("news-sentiment", "value"),
+    Input("news-timeframe", "value"),
 )
-def filter_news(ticker, sentiment):
-    return build_news_feed(ticker, sentiment)
+def filter_news(ticker, sentiment, timeframe):
+    return _news_count_text(ticker, sentiment, timeframe), build_news_feed(ticker, sentiment, timeframe)
 
 
 # ----------------------------------------------------------------------------- charts
-def build_news_summary(ticker, ohlc):
-    """A plain-English directional read of recent news for one ticker. Observational only."""
+def build_news_summary(ticker, ohlc, timeframe):
+    """A plain-English directional read of timeframe-matched news for one ticker. Observational only."""
     df = headlines_df()
     df = df[df["ticker"] == ticker]
     if df.empty:
         return html.Div("No news stored for this ticker yet.",
                         style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
 
-    recent = df.head(25)
+    df = df[df["timestamp"] >= ohlc.index.min()]
+    if df.empty:
+        return html.Div(f"No headlines for {ticker} in the {timeframe} window.",
+                        style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
+
+    recent = df
     total = len(recent)
     pos = int((recent["label"] == "positive").sum())
     neg = int((recent["label"] == "negative").sum())
@@ -533,32 +557,75 @@ def build_news_summary(ticker, ohlc):
     else:
         read = "News has been mostly negative while price rose — a divergence worth watching."
 
-    rec, rec_score, comps = recommendation(avg, price_move)
-    rec_color = REC_COLORS[rec]
-
     # --- fundamentals + verdict (fundamentals x sentiment) ---
     fscore, fcomps, fused, ftotal, fraw = cached(
         ("fund", ticker), 600, lambda: fundamental_score(ticker, peers(ticker)))
     v_label, v_action, v_expl = verdict(fscore, avg)
     v_color = GREEN if "Buy" in v_action else RED if "Sell" in v_action else AMBER
 
-    def _metric(lbl, val):
-        return html.Div([html.Div(lbl, style={"fontSize": "10px", "color": MUTED}),
-                         html.Div(val, style={"fontSize": "15px", "fontWeight": "700"})],
-                        style={"background": BG, "border": f"1px solid {BORDER}", "borderRadius": "8px",
-                               "padding": "8px 12px", "textAlign": "center"})
-    metric_boxes = []
-    if fraw.get("pe"):
-        metric_boxes.append(_metric("P/E", f"{fraw['pe']:.1f}"))
-    if fraw.get("pb"):
-        metric_boxes.append(_metric("P/B", f"{fraw['pb']:.1f}"))
-    if fraw.get("roe") is not None:
-        metric_boxes.append(_metric("ROE", f"{fraw['roe'] * 100:.1f}%"))
-    if fraw.get("debt") is not None:
-        metric_boxes.append(_metric("D/E", f"{fraw['debt'] / 100:.2f}x"))
-    if fraw.get("eps") is not None:
-        metric_boxes.append(_metric("EPS", f"{fraw['eps']:.1f}"))
     fscore_txt = f"{fscore:.0f}/100" if fscore is not None else "Insufficient data"
+
+    def _fmt_num(value, suffix="", decimals=2):
+        if value is None:
+            return "NA"
+        return f"{value:,.{decimals}f}{suffix}"
+
+    def _fmt_money(value):
+        if value is None:
+            return "NA"
+        cur = currency(ticker)
+        if cur == "₹":
+            return f"₹{value / 10_000_000:,.0f}Cr"
+        if abs(value) >= 1_000_000_000_000:
+            return f"{cur}{value / 1_000_000_000_000:,.2f}T"
+        if abs(value) >= 1_000_000_000:
+            return f"{cur}{value / 1_000_000_000:,.2f}B"
+        if abs(value) >= 1_000_000:
+            return f"{cur}{value / 1_000_000:,.2f}M"
+        return f"{cur}{value:,.0f}"
+
+    def _fund_row(label, value, hint=None):
+        label_bits = [html.Span(label, style={"color": MUTED})]
+        if hint:
+            label_bits.append(html.Span("i", title=hint, style={
+                "display": "inline-flex", "alignItems": "center", "justifyContent": "center",
+                "width": "14px", "height": "14px", "marginLeft": "6px", "borderRadius": "50%",
+                "border": f"1px solid {MUTED}", "color": MUTED, "fontSize": "9px", "fontWeight": "800",
+            }))
+        return html.Div([
+            html.Div(label_bits, style={"display": "flex", "alignItems": "center"}),
+            html.Div(value, style={"fontWeight": "800", "color": TEXT, "textAlign": "right"}),
+        ], style={"display": "grid", "gridTemplateColumns": "1fr auto", "gap": "16px",
+                  "alignItems": "center", "padding": "11px 0", "borderBottom": f"1px solid {BORDER}"})
+
+    def _score_chip(name, score_weight):
+        score, weight = score_weight
+        color = GREEN if score >= 65 else RED if score < 40 else AMBER
+        return html.Div([
+            html.Div(name, style={"fontSize": "11px", "fontWeight": "800", "color": TEXT}),
+            html.Div([
+                html.Div(style={"width": f"{score:.0f}%", "height": "100%", "background": color,
+                                "borderRadius": "999px"}),
+            ], style={"height": "5px", "background": BG, "borderRadius": "999px", "overflow": "hidden",
+                      "margin": "7px 0"}),
+            html.Div(f"{score:.0f}/100 · weight {weight}%",
+                     style={"fontSize": "10px", "color": MUTED}),
+        ], style={"background": BG, "border": f"1px solid {BORDER}", "borderRadius": "8px",
+                  "padding": "10px 12px"})
+
+    fund_metrics = [
+        ("Market Cap", _fmt_money(fraw.get("market_cap")), None),
+        ("ROE", _fmt_num(fraw.get("roe") * 100 if fraw.get("roe") is not None else None, "%", 2),
+         "Return on equity; higher is generally better."),
+        ("P/E Ratio (TTM)", _fmt_num(fraw.get("pe"), "", 2), "Trailing price-to-earnings ratio."),
+        ("EPS (TTM)", _fmt_num(fraw.get("eps"), "", 2), "Trailing earnings per share."),
+        ("P/B Ratio", _fmt_num(fraw.get("pb"), "", 2), "Price-to-book ratio."),
+        ("Dividend Yield", fraw.get("dividend_yield_display", "NA"), None),
+        ("Industry P/E", _fmt_num(fraw.get("industry_pe"), "", 2), "Average P/E across configured peers."),
+        ("Book Value", _fmt_num(fraw.get("book_value"), "", 2), None),
+        ("Debt to Equity", _fmt_num(fraw.get("debt") / 100 if fraw.get("debt") is not None else None, "", 2), None),
+        ("Face Value", _fmt_num(fraw.get("face_value"), "", 2), None),
+    ]
 
     verdict_panel = html.Div([
         html.Div("VERDICT  —  Fundamentals + Sentiment",
@@ -569,17 +636,45 @@ def build_news_summary(ticker, ohlc):
     ], style={"background": "#1f2630", "border": f"1px solid {v_color}", "borderRadius": "10px",
               "padding": "14px 18px", "marginBottom": "12px"})
 
+    score_pct = max(0, min(100, fscore or 0))
+    score_color = GREEN if fscore is not None and fscore >= 65 else RED if fscore is not None and fscore < 40 else AMBER
     fund_panel = html.Div([
         html.Div([
-            html.Span("Fundamentals", style={"fontSize": "13px", "fontWeight": "700"}),
-            html.Span(f"Score {fscore_txt}", style={"fontSize": "13px", "fontWeight": "800", "color": ACCENT}),
-        ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "10px"}),
-        html.Div(metric_boxes, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"}),
-        html.Div(f"based on {fused} of {ftotal} metrics"
-                 + (f": {', '.join(fcomps.keys())}" if fcomps else ""),
-                 style={"fontSize": "11px", "color": MUTED, "marginTop": "8px"}),
+            html.Div([
+                html.Span("Fundamentals", style={"fontSize": "18px", "fontWeight": "800"}),
+                html.Span("i", title="Fundamental data comes from yfinance; missing fields are shown as NA.",
+                          style={"display": "inline-flex", "alignItems": "center", "justifyContent": "center",
+                                 "width": "16px", "height": "16px", "marginLeft": "8px", "borderRadius": "50%",
+                                 "border": f"1px solid {MUTED}", "color": MUTED,
+                                 "fontSize": "10px", "fontWeight": "800"}),
+            ], style={"display": "flex", "alignItems": "center"}),
+            html.Div(f"Score {fscore_txt}",
+                     style={"fontSize": "13px", "fontWeight": "800", "color": score_color,
+                            "background": BG, "border": f"1px solid {score_color}",
+                            "borderRadius": "999px", "padding": "5px 12px"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "gap": "12px",
+                  "alignItems": "center", "marginBottom": "12px"}),
+        html.Div([
+            html.Div(style={"width": f"{score_pct:.0f}%", "height": "100%", "background": score_color,
+                            "borderRadius": "999px"}),
+        ], style={"height": "7px", "background": BG, "borderRadius": "999px",
+                  "overflow": "hidden", "marginBottom": "18px"}),
+        html.Div([_fund_row(label, value, hint) for label, value, hint in fund_metrics],
+                 style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(320px, 1fr))",
+                        "columnGap": "42px", "rowGap": "0", "marginBottom": "16px"}),
+        html.Div([
+            html.Div("Score breakdown", style={"fontSize": "12px", "fontWeight": "800",
+                                               "color": MUTED, "letterSpacing": "0.4px",
+                                               "textTransform": "uppercase", "marginBottom": "10px"}),
+            html.Div([_score_chip(name, score_weight) for name, score_weight in fcomps.items()],
+                     style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(170px, 1fr))",
+                            "gap": "10px"}),
+            html.Div(f"Based on {fused} of {ftotal} score metrics"
+                     + (f": {', '.join(fcomps.keys())}" if fcomps else ""),
+                     style={"fontSize": "11px", "color": MUTED, "marginTop": "10px"}),
+        ], style={"borderTop": f"1px solid {BORDER}", "paddingTop": "14px"}),
     ], style={"background": "#1f2630", "border": f"1px solid {BORDER}", "borderRadius": "10px",
-              "padding": "14px 18px", "marginBottom": "12px"})
+              "padding": "20px 24px", "marginBottom": "12px"})
 
     most_pos = recent.loc[recent["score"].idxmax()]
     most_neg = recent.loc[recent["score"].idxmin()]
@@ -590,25 +685,9 @@ def build_news_summary(ticker, ohlc):
 
     return html.Div([
         html.H3(f"Analysis & Signal — {ticker}", style={"marginTop": 0}),
-        html.Div(f"{total} recent headlines · {pos} positive · {neg} negative · {neu} neutral · "
+        html.Div(f"{total} headlines in the {timeframe} window · {pos} positive · {neg} negative · {neu} neutral · "
                  f"avg sentiment {avg:+.2f} ({lean})", style={"color": MUTED, "marginBottom": "4px"}),
         html.Div(f"Price over this window: {price_move:+.1f}%", style={"color": MUTED, "marginBottom": "12px"}),
-        # ---- recommendation signal ----
-        html.Div([
-            html.Div([
-                html.Div("RECOMMENDATION", style={"fontSize": "11px", "color": MUTED, "letterSpacing": "1px"}),
-                html.Div(rec, style={"fontSize": "30px", "fontWeight": "800", "color": rec_color}),
-            ]),
-            html.Div([
-                html.Div(f"Composite score {rec_score:+.2f}", style={"fontSize": "13px", "fontWeight": "700"}),
-                html.Div(f"News sentiment (60%): {comps['sentiment']:+.2f}",
-                         style={"fontSize": "11px", "color": MUTED}),
-                html.Div(f"Price momentum (40%): {comps['momentum']:+.2f}",
-                         style={"fontSize": "11px", "color": MUTED}),
-            ], style={"textAlign": "right"}),
-        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
-                  "background": "#1f2630", "border": f"1px solid {rec_color}", "borderRadius": "10px",
-                  "padding": "14px 18px", "marginBottom": "12px"}),
         verdict_panel,
         fund_panel,
         html.Div(read, style={"color": MUTED, "fontSize": "12.5px", "lineHeight": "1.5", "marginBottom": "14px"}),
@@ -708,7 +787,7 @@ def update_charts(ticker, timeframe, _tick):
     )
     fig.update_yaxes(title_text="Sentiment", range=[-1, 1], row=1, col=1)
     fig.update_yaxes(title_text=f"Price ({currency(ticker)})", row=2, col=1)
-    return fig, build_price_comparison(ticker, days), build_news_summary(ticker, ohlc)
+    return fig, build_price_comparison(ticker, days), build_news_summary(ticker, ohlc, timeframe)
 
 
 if __name__ == "__main__":
