@@ -627,14 +627,28 @@ def build_news_summary(ticker, ohlc, timeframe):
         ("Face Value", _fmt_num(fraw.get("face_value"), "", 2), None),
     ]
 
+    fscore_disp = f"{fscore:.0f}/100" if fscore is not None else "N/A"
     verdict_panel = html.Div([
-        html.Div("VERDICT  —  Fundamentals + Sentiment",
-                 style={"fontSize": "11px", "color": MUTED, "letterSpacing": "1px"}),
-        html.Div(f"{v_label}  →  {v_action}",
-                 style={"fontSize": "26px", "fontWeight": "800", "color": v_color}),
-        html.Div(v_expl, style={"fontSize": "12.5px", "color": MUTED, "marginTop": "6px", "lineHeight": "1.5"}),
+        html.Div([
+            html.Div("VERDICT  —  Fundamentals + Sentiment",
+                     style={"fontSize": "11px", "color": MUTED, "letterSpacing": "1px"}),
+            html.Div(f"{v_label}  →  {v_action}",
+                     style={"fontSize": "26px", "fontWeight": "800", "color": v_color}),
+            html.Div(v_expl, style={"fontSize": "12.5px", "color": MUTED, "marginTop": "6px",
+                                    "lineHeight": "1.5", "maxWidth": "560px"}),
+        ], style={"flex": "1"}),
+        html.Div([
+            html.Div("BASED ON", style={"fontSize": "10px", "color": MUTED, "letterSpacing": "1px",
+                                        "marginBottom": "6px"}),
+            html.Div([html.Span("Fundamental score  ", style={"color": MUTED, "fontSize": "12px"}),
+                      html.Span(fscore_disp, style={"fontWeight": "800", "fontSize": "15px"})],
+                     style={"marginBottom": "3px"}),
+            html.Div([html.Span("News sentiment  ", style={"color": MUTED, "fontSize": "12px"}),
+                      html.Span(f"{avg:+.2f}", style={"fontWeight": "800", "fontSize": "15px"})]),
+        ], style={"textAlign": "right", "minWidth": "175px"}),
     ], style={"background": "#1f2630", "border": f"1px solid {v_color}", "borderRadius": "10px",
-              "padding": "14px 18px", "marginBottom": "12px"})
+              "padding": "14px 18px", "marginBottom": "12px", "display": "flex",
+              "justifyContent": "space-between", "alignItems": "center", "gap": "20px"})
 
     score_pct = max(0, min(100, fscore or 0))
     score_color = GREEN if fscore is not None and fscore >= 65 else RED if fscore is not None and fscore < 40 else AMBER
@@ -694,8 +708,8 @@ def build_news_summary(ticker, ohlc, timeframe):
         html.Div([html.Span("Most positive: ", style={"color": GREEN, "fontWeight": "700"}), link(most_pos)],
                  style={"marginBottom": "6px"}),
         html.Div([html.Span("Most negative: ", style={"color": RED, "fontWeight": "700"}), link(most_neg)]),
-        html.Div("Rule-based educational signal — 60% news sentiment + 40% price momentum, "
-                 "mapped to five categories. NOT buy/sell/hold financial advice.",
+        html.Div("Rule-based educational signal — combines the fundamental score with news sentiment "
+                 "(see the verdict box). NOT buy/sell/hold financial advice.",
                  style={"color": MUTED, "fontSize": "11px", "marginTop": "14px", "fontStyle": "italic"}),
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
 

@@ -149,36 +149,22 @@ def _first_valid(*values):
 
 
 def _parse_dividend_yield(raw_dividend, face_value, current_price, annual_dividend=None):
-    """Return corrected dividend yield as (decimal_fraction, display_string).
+    """Return dividend yield as (decimal_fraction, display_string).
 
-    Some Indian-market sources expose dividend as a rate on face value (for example
-    175% on a Rs 1 face value), not as yield on market price. When the raw percentage
-    is greater than 20, treat it as a face-value rate and convert it to real yield:
-
-        ((dividend_rate_pct / 100) * face_value) / current_market_price * 100
-
-    If face value is unavailable, fall back to annual absolute dividend payout when
-    provided. If the required price input is missing, return a safe NA display.
+    yfinance's `dividendYield` is ALREADY a percentage (e.g. 0.93 == 0.93%, 1.75 == 1.75%),
+    so use it directly. Only fall back to annual_dividend / current_price when it's missing.
+    (`face_value` is accepted for backward compatibility but no longer needed.)
     """
     raw = _to_float(raw_dividend)
-    face = _to_float(face_value)
     price = _to_float(current_price)
     annual = _to_float(annual_dividend)
 
-    yield_pct = None
     if raw is not None:
-        if raw > 20:
-            if price is not None and price > 0 and face is not None and face > 0:
-                annual_cash_dividend = (raw / 100.0) * face
-                yield_pct = annual_cash_dividend / price * 100.0
-            elif price is not None and price > 0 and annual is not None and annual >= 0:
-                yield_pct = annual / price * 100.0
-        elif raw <= 1:
-            yield_pct = raw * 100.0
-        else:
-            yield_pct = raw
-    elif price is not None and price > 0 and annual is not None and annual >= 0:
-        yield_pct = annual / price * 100.0
+        yield_pct = raw                                  # already a percent
+    elif price and price > 0 and annual is not None and annual >= 0:
+        yield_pct = annual / price * 100.0               # fallback: annual dividend / price
+    else:
+        yield_pct = None
 
     if yield_pct is None:
         return None, "NA"
@@ -286,17 +272,29 @@ def verdict(fund_score, avg_sentiment):
             return "Sentiment-led", "Lean Sell", "Fundamentals unavailable - signal from news sentiment only."
         return "Sentiment-led", "Hold", "Fundamentals unavailable and news sentiment is neutral."
 
-    strong, weak = fund_score >= 60, fund_score <= 40
-    pos, neg, very_pos = avg_sentiment > 0.15, avg_sentiment < -0.15, avg_sentiment > 0.35
+    strong, weak = fund_score >= 65, fund_score <= 40
+    very_pos, pos = avg_sentiment > 0.35, avg_sentiment > 0.10
+    neg = avg_sentiment < -0.10
 
-    if strong and neg:
-        return "Overreaction", "Buy", ("Strong fundamentals but negative news - the market may be "
-                                       "overreacting to bad news (possible value opportunity).")
-    if weak and very_pos:
-        return "Hype Trap", "Sell / Caution", ("Weak fundamentals but very positive news - the price "
-                                                "may be driven by emotion, not the numbers.")
-    if strong and pos:
-        return "Momentum", "Strong Buy", "Strong fundamentals and positive news - the numbers and the mood agree."
-    if weak and neg:
-        return "Weak", "Sell", "Weak fundamentals and negative news - little support from either side."
-    return "Mixed", "Hold", "Fundamentals and sentiment don't point the same way - no clear edge."
+    if strong:                                             # strong fundamentals -> fundamentals lead
+        if neg:
+            return "Overreaction", "Buy", ("Strong fundamentals but negative news - the market may be "
+                                           "overreacting to bad news (possible value opportunity).")
+        if pos:
+            return "Momentum", "Strong Buy", "Strong fundamentals and positive news - the numbers and the mood agree."
+        return "Quality", "Buy", ("Strong fundamentals with neutral news - a solid business with no "
+                                  "negative catalyst.")
+    if weak:                                               # weak fundamentals -> caution
+        if very_pos:
+            return "Hype Trap", "Sell / Caution", ("Weak fundamentals but very positive news - the price "
+                                                   "may be driven by emotion, not the numbers.")
+        if pos:
+            return "Caution", "Reduce", ("Weak fundamentals propped up by positive news - limited support "
+                                         "from the numbers.")
+        return "Weak", "Sell", "Weak fundamentals and no positive catalyst - little support from either side."
+    # mid-range fundamentals -> sentiment is the deciding edge
+    if pos:
+        return "Sentiment-led", "Lean Buy", "Average fundamentals; the edge here is positive news flow."
+    if neg:
+        return "Sentiment-led", "Lean Sell", "Average fundamentals; negative news flow is the main signal."
+    return "Mixed", "Hold", "Average fundamentals and neutral news - no clear edge."
