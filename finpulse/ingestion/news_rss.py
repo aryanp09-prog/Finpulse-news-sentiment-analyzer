@@ -19,6 +19,23 @@ MONEYCONTROL_FEEDS = [
     "https://www.moneycontrol.com/rss/marketreports.xml",
 ]
 
+# Economic Times — Indian business/markets news (category-level)
+ET_FEEDS = [
+    "https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2146843.cms",
+    "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    "https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms",
+]
+
+# CNBC — market-moving global/US news (category-level)
+CNBC_FEEDS = [
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",   # Markets
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",   # Finance
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",  # Top News
+]
+
+# Reuters dropped its public RSS in 2020 — pull it via Google News filtered to reuters.com.
+REUTERS_QUERY = "site:reuters.com (business OR markets OR stocks OR economy)"
+
 
 def _timestamp(entry):
     if entry.get("published_parsed"):
@@ -46,17 +63,40 @@ def fetch_rss(query, limit=20):
     return out
 
 
-def fetch_moneycontrol(limit=80):
-    """Category-level Indian market news from Moneycontrol RSS (tagged to tickers by the caller)."""
+def _fetch_feeds(feed_urls, source, limit):
+    """Pull headlines from a list of RSS feeds under one source label (category-level)."""
     out = []
-    for feed_url in MONEYCONTROL_FEEDS:
+    for feed_url in feed_urls:
         feed = feedparser.parse(feed_url)
         for e in feed.entries:
             title = e.get("title")
             if not title:
                 continue
-            out.append({"text": title, "source": "Moneycontrol",
+            out.append({"text": title, "source": source,
                         "timestamp": _timestamp(e), "url": e.get("link")})
             if len(out) >= limit:
                 return out
     return out
+
+
+def fetch_moneycontrol(limit=80):
+    """Category-level Indian market news from Moneycontrol RSS (tagged to tickers by the caller)."""
+    return _fetch_feeds(MONEYCONTROL_FEEDS, "Moneycontrol", limit)
+
+
+def fetch_economictimes(limit=80):
+    """Category-level Indian business/markets news from Economic Times RSS."""
+    return _fetch_feeds(ET_FEEDS, "Economic Times", limit)
+
+
+def fetch_cnbc(limit=80):
+    """Category-level market-moving US/global news from CNBC RSS."""
+    return _fetch_feeds(CNBC_FEEDS, "CNBC", limit)
+
+
+def fetch_reuters(limit=40):
+    """High-quality global news from Reuters (via Google News, since Reuters' own RSS is gone)."""
+    items = fetch_rss(REUTERS_QUERY, limit=limit)
+    for it in items:
+        it["source"] = "Reuters"
+    return items

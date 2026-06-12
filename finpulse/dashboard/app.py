@@ -401,9 +401,18 @@ def _sentiment_pill(label):
     })
 
 
+# Stored timestamps are UTC; show each headline in ITS market's local time so it reads naturally.
+MARKET_TZ = {"IN": ("Asia/Kolkata", "IST"), "US": ("America/New_York", "ET")}
+
+
+def _local_time(ts, ticker):
+    tz, label = MARKET_TZ.get(STOCKS.get(ticker, {}).get("market"), ("UTC", "UTC"))
+    return ts.tz_convert(tz).strftime("%b %d, %Y · %H:%M") + f" {label}"
+
+
 def _news_row(r):
     href = r["url"] if r["url"] else "#"
-    when = r["timestamp"].strftime("%b %d, %Y · %H:%M")
+    when = _local_time(r["timestamp"], r["ticker"])
     return html.A([
         html.Span(r["ticker"], style={
             "background": "#1f2630", "color": ACCENT, "borderRadius": "6px", "padding": "4px 9px",
