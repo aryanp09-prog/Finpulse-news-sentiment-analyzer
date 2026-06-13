@@ -54,6 +54,19 @@ FastAPI REST API and a Dash/Plotly dashboard.
   Coverage jumped 107 -> 309 headlines; every ticker now has 20+ (DMART fixed: 0 -> 20).
 
 **Recent work (newest first):**
+- RELEVANCE LAYER ✅ — kills off-topic mis-tags (e.g. "Trent" the footballer/university/engine).
+  `config.py` per-ticker `exclude` lists + disambiguated `query` (TRENT->"Trent Ltd"; MM excludes
+  "tech mahindra"). `ticker_tagger.is_relevant(text, ticker)` enforced in BOTH `tag()` (category
+  feeds) and `fetch_news.store()` (per-ticker feeds). `purge_irrelevant.py` (new) cleans existing
+  rows (backs up DB, prints removals) — removed 16 junk rows. To add a namesake later: add a term
+  to that ticker's `exclude` then run `python purge_irrelevant.py`.
+- GDELT historical backfill — ABANDONED (2026-06-13). `news_gdelt.py`/`backfill.py` exist but are
+  NOT wired in. Fatal flaw: GDELT matches the query in article BODIES but we score TITLES, so it
+  returned off-topic market-roundup headlines (238/339 HDFCBANK rows junk). Data was rolled back.
+  Grow history by running `fetch_news` over time instead. Files kept on disk for reference only.
+- ANALYTICS UI: custom card dropdowns (company w/ logo + timeframe) replacing react-select
+  (`app.ticker_selector`/`timeframe_selector`, toggle callbacks); per-point TRANSPARENCY — click a
+  sentiment point -> `build_day_detail` lists that day's headlines w/ individual scores.
 - UI: company **logos** added (Google favicon via `config.logo_url`; `domain` field per ticker).
   Home cards now show logo + company name (`app.logo_chip`/`market_badge`); Analytics has a
   logo+name+sector header (`app.ticker_header`) that auto-swaps via a SEPARATE `update_ticker_header`
