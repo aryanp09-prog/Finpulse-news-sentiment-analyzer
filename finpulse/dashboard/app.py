@@ -17,7 +17,8 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dash import Dash, dcc, html, dash_table, Input, Output
+from dash import Dash, dcc, html, dash_table, Input, Output, State, ctx, ALL, no_update
+from dash.exceptions import PreventUpdate
 
 from finpulse.storage.db import fetch_all
 from finpulse.aggregation.aggregator import (aggregate_sentiment, load_ohlc, detect_divergence,
@@ -93,6 +94,68 @@ def ticker_header(ticker):
         ]),
         html.Div(market_badge(ticker), style={"marginLeft": "auto", "alignSelf": "flex-start"}),
     ], style={"display": "flex", "gap": "14px", "alignItems": "center", "marginBottom": "14px"})
+
+
+# ---- Custom dropdowns built from our dark cards (native <details> toggle + click callbacks) ----
+def _ticker_trigger_inner(ticker):
+    """The selected-company card shown in the dropdown trigger (and updated on change)."""
+    return html.Div([
+        logo_chip(ticker, size=40),
+        html.Div([
+            html.Div(display_name(ticker), style={"fontSize": "18px", "fontWeight": "800", "color": TEXT}),
+            html.Div([
+                html.Span(ticker, style={"color": ACCENT, "fontWeight": "700", "fontSize": "12px"}),
+                html.Span(STOCKS[ticker]["sector"], style={"color": MUTED, "fontSize": "12px"}),
+            ], style={"display": "flex", "gap": "9px", "marginTop": "2px"}),
+        ]),
+        html.Div(market_badge(ticker), style={"marginLeft": "auto", "alignSelf": "center"}),
+        html.Span("▾", className="fp-caret",
+                  style={"color": MUTED, "fontSize": "15px", "marginLeft": "12px", "alignSelf": "center"}),
+    ], style={"display": "flex", "gap": "12px", "alignItems": "center", "width": "100%"})
+
+
+def _ticker_option_card(ticker):
+    return html.Div([
+        logo_chip(ticker, size=26),
+        html.Div([
+            html.Span(display_name(ticker), style={"fontWeight": "600", "color": TEXT, "fontSize": "13px"}),
+            html.Span(ticker, style={"color": MUTED, "fontSize": "11px", "marginLeft": "7px"}),
+        ]),
+    ], id={"type": "tk-opt", "index": ticker}, n_clicks=0, className="fp-option",
+       style={"display": "flex", "gap": "10px", "alignItems": "center"})
+
+
+def ticker_selector(ticker):
+    return html.Div([
+        html.Div(_ticker_trigger_inner(ticker), id="ticker-trigger", n_clicks=0, className="fp-summary"),
+        html.Div([_ticker_option_card(t) for t in TICKERS], id="ticker-options",
+                 className="fp-options", style={"display": "none"}),
+    ], className="fp-select")
+
+
+def _tf_trigger_inner(tf):
+    return html.Div([
+        html.Div([
+            html.Div("Timeframe", style={"fontSize": "10px", "color": MUTED, "fontWeight": "700",
+                                         "letterSpacing": "0.5px", "textTransform": "uppercase"}),
+            html.Div(tf, style={"fontSize": "17px", "fontWeight": "700", "color": TEXT, "marginTop": "3px"}),
+        ]),
+        html.Span("▾", className="fp-caret",
+                  style={"color": MUTED, "fontSize": "15px", "marginLeft": "auto", "alignSelf": "center"}),
+    ], style={"display": "flex", "alignItems": "center", "width": "100%"})
+
+
+def _tf_option(tf):
+    return html.Div(tf, id={"type": "tf-opt", "index": tf}, n_clicks=0, className="fp-option",
+                    style={"color": TEXT, "fontSize": "13px", "fontWeight": "600"})
+
+
+def timeframe_selector(tf):
+    return html.Div([
+        html.Div(_tf_trigger_inner(tf), id="tf-trigger", n_clicks=0, className="fp-summary"),
+        html.Div([_tf_option(k) for k in TIMEFRAMES], id="tf-options",
+                 className="fp-options", style={"display": "none"}),
+    ], className="fp-select")
 
 
 # ----------------------------------------------------------------------------- caching
@@ -410,23 +473,20 @@ def analytics_page(default_ticker=None):
         html.H2("Analytics"),
         html.P("Sentiment vs. price — aligned on the same time axis.", style={"color": MUTED}),
         html.Div([
-            dcc.Dropdown(
-                id="ticker-dropdown", options=[{"label": t, "value": t} for t in TICKERS],
-                value=ticker_value, clearable=False,
-                style={"width": "180px", "color": "#000"},
-            ),
-            dcc.Dropdown(
-                id="timeframe-dropdown", options=[{"label": k, "value": k} for k in TIMEFRAMES],
-                value="Daily", clearable=False,
-                style={"width": "140px", "color": "#000"},
-            ),
-        ], style={"display": "flex", "gap": "12px", "marginBottom": "10px"}),
-        html.P("Choose a timeframe. Auto-refreshes every 60s. "
-               "Drag across either panel to pan/zoom; double-click to reset.",
-               style={"color": MUTED, "fontSize": "12px"}),
-        html.Div(ticker_header(ticker_value), id="ticker-logo",
-                 style={**CARD_STYLE, "flex": "unset", "padding": "14px 18px", "marginBottom": "14px"}),
+            html.Div(ticker_selector(ticker_value), style={"flex": "2", "minWidth": "320px"}),
+            html.Div(timeframe_selector("Daily"), style={"flex": "1", "minWidth": "210px"}),
+            # hidden value-holders — update_charts still reads these; the custom cards set them.
+            dcc.Dropdown(id="ticker-dropdown", options=[{"label": t, "value": t} for t in TICKERS],
+                         value=ticker_value, clearable=False, style={"display": "none"}),
+            dcc.Dropdown(id="timeframe-dropdown", options=[{"label": k, "value": k} for k in TIMEFRAMES],
+                         value="Daily", clearable=False, style={"display": "none"}),
+        ], style={"display": "flex", "gap": "14px", "marginBottom": "12px",
+                  "alignItems": "flex-start", "flexWrap": "wrap"}),
+        html.P("Pick a company and timeframe. Auto-refreshes every 60s. "
+               "Drag across either chart panel to pan/zoom; double-click to reset.",
+               style={"color": MUTED, "fontSize": "12px", "marginBottom": "16px"}),
         dcc.Graph(id="combined-graph", style={"height": "720px"}),
+        html.Div(_detail_hint(), id="sentiment-detail", style={"marginTop": "10px", "marginBottom": "8px"}),
         html.Div(id="price-comparison"),
         html.Div(id="news-summary"),
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),   # redraw every 60 seconds
@@ -468,6 +528,65 @@ def _news_row(r):
         "display": "flex", "alignItems": "center", "padding": "14px 18px",
         "borderBottom": f"1px solid {BORDER}", "textDecoration": "none", "color": "inherit",
     })
+
+
+# ---- Per-point transparency: which headlines produced a day's sentiment score ----
+def _detail_hint(msg=None):
+    return html.Div(
+        msg or "💡 Click any point on the sentiment line above to see exactly which headlines were "
+               "processed that day and how each one scored.",
+        style={**CARD_STYLE, "flex": "unset", "color": MUTED, "fontSize": "13px"})
+
+
+def _day_news_row(r):
+    """A headline row showing its INDIVIDUAL score (so reviewers see what drove the day's average)."""
+    href = r["url"] if r["url"] else "#"
+    when = _local_time(r["timestamp"], r["ticker"])
+    sc = float(r["score"])
+    scolor = GREEN if sc > 0.05 else RED if sc < -0.05 else MUTED
+    return html.A([
+        html.Span(f"{sc:+.2f}", style={
+            "background": "#1f2630", "color": scolor, "borderRadius": "6px", "padding": "4px 9px",
+            "fontSize": "12px", "fontWeight": "800", "minWidth": "52px", "textAlign": "center",
+            "whiteSpace": "nowrap",
+        }),
+        html.Div([
+            html.Div(r["text"], style={"color": TEXT, "fontWeight": "500", "lineHeight": "1.4"}),
+            html.Div(when, style={"color": MUTED, "fontSize": "11px", "marginTop": "4px"}),
+        ], style={"flex": "1", "margin": "0 16px", "minWidth": 0}),
+        _sentiment_pill(r["label"]),
+    ], href=href, target="_blank", className="news-row", style={
+        "display": "flex", "alignItems": "center", "padding": "14px 18px",
+        "borderBottom": f"1px solid {BORDER}", "textDecoration": "none", "color": "inherit",
+    })
+
+
+def build_day_detail(ticker, day):
+    """Panel listing every headline for `ticker` on UTC `day` (matches the chart's daily buckets)."""
+    df = headlines_df()
+    if df.empty:
+        return _detail_hint()
+    df = df[df["ticker"] == ticker]
+    df = df[df["timestamp"].dt.date == day]      # timestamps are UTC -> same bucket as resample("1D")
+    if df.empty:
+        return _detail_hint(f"No headlines stored for {ticker} on {day:%b %d, %Y}.")
+    df = df.sort_values("score", ascending=False)
+    mean = float(df["score"].mean())
+    mcolor = GREEN if mean > 0.05 else RED if mean < -0.05 else MUTED
+    header = html.Div([
+        html.Div([
+            html.Span(f"{len(df)} headlines", style={"fontWeight": "800", "fontSize": "15px"}),
+            html.Span(f"  processed on {day:%b %d, %Y}  (UTC)", style={"color": MUTED, "fontSize": "13px"}),
+        ]),
+        html.Div([
+            html.Span("Day average  ", style={"color": MUTED, "fontSize": "12px"}),
+            html.Span(f"{mean:+.2f}", style={"color": mcolor, "fontWeight": "800", "fontSize": "15px"}),
+        ]),
+    ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+              "padding": "14px 18px", "borderBottom": f"1px solid {BORDER}", "flexWrap": "wrap"})
+    rows = [_day_news_row(r) for _, r in df.iterrows()]
+    return html.Div([header, *rows], style={**CARD_STYLE, "flex": "unset", "padding": "0",
+                                            "overflow": "hidden"})
 
 
 def _filter_news_df(df, ticker="All", sentiment="All", timeframe="All time"):
@@ -804,10 +923,81 @@ def build_price_comparison(ticker, days):
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
 
 
-@app.callback(Output("ticker-logo", "children"), Input("ticker-dropdown", "value"))
-def update_ticker_header(ticker):
-    # Separate from update_charts so the logo header swaps instantly and can't break the charts.
-    return ticker_header(ticker)
+# ---- Custom dropdown wiring -------------------------------------------------
+# One callback per selector handles BOTH opening/closing (trigger click) and selecting (option
+# click). Open/close is controlled fully via the panel's style so it can't desync like <details>.
+# Selecting sets the hidden value-holder that update_charts reads, so the charts can't break.
+@app.callback(
+    Output("ticker-options", "style"),
+    Output("ticker-trigger", "className"),
+    Output("ticker-dropdown", "value"),
+    Input("ticker-trigger", "n_clicks"),
+    Input({"type": "tk-opt", "index": ALL}, "n_clicks"),
+    State("ticker-options", "style"),
+    prevent_initial_call=True,
+)
+def ticker_dropdown(_trig, opt_clicks, style):
+    style = dict(style or {})
+    trig = ctx.triggered_id
+    if trig == "ticker-trigger":                                   # toggle open/close
+        opening = style.get("display") != "block"
+        style["display"] = "block" if opening else "none"
+        return style, ("fp-summary fp-open" if opening else "fp-summary"), no_update
+    if isinstance(trig, dict) and any(opt_clicks):                 # an option was picked
+        style["display"] = "none"
+        return style, "fp-summary", trig["index"]
+    raise PreventUpdate
+
+
+@app.callback(
+    Output("tf-options", "style"),
+    Output("tf-trigger", "className"),
+    Output("timeframe-dropdown", "value"),
+    Input("tf-trigger", "n_clicks"),
+    Input({"type": "tf-opt", "index": ALL}, "n_clicks"),
+    State("tf-options", "style"),
+    prevent_initial_call=True,
+)
+def timeframe_dropdown(_trig, opt_clicks, style):
+    style = dict(style or {})
+    trig = ctx.triggered_id
+    if trig == "tf-trigger":
+        opening = style.get("display") != "block"
+        style["display"] = "block" if opening else "none"
+        return style, ("fp-summary fp-open" if opening else "fp-summary"), no_update
+    if isinstance(trig, dict) and any(opt_clicks):
+        style["display"] = "none"
+        return style, "fp-summary", trig["index"]
+    raise PreventUpdate
+
+
+@app.callback(
+    Output("sentiment-detail", "children"),
+    Input("combined-graph", "clickData"),
+    Input("ticker-dropdown", "value"),
+)
+def show_day_detail(click, ticker):
+    # Reset to the hint when the ticker changes; otherwise show the clicked day's headlines.
+    if ctx.triggered_id == "ticker-dropdown" or not click:
+        return _detail_hint()
+    pts = click.get("points", [])
+    if not pts:
+        return _detail_hint()
+    pt = pts[0]
+    if pt.get("curveNumber") != 0:   # curve 0 = sentiment line; 1 = candlestick
+        return _detail_hint("Click a point on the SENTIMENT line (top panel) to see its headlines.")
+    day = pd.to_datetime(pt["x"]).date()
+    return build_day_detail(ticker, day)
+
+
+@app.callback(Output("ticker-trigger", "children"), Input("ticker-dropdown", "value"))
+def update_ticker_trigger(ticker):
+    return _ticker_trigger_inner(ticker)
+
+
+@app.callback(Output("tf-trigger", "children"), Input("timeframe-dropdown", "value"))
+def update_tf_trigger(tf):
+    return _tf_trigger_inner(tf)
 
 
 @app.callback(
@@ -842,6 +1032,9 @@ def update_charts(ticker, timeframe, _tick):
     fig.add_trace(go.Scatter(
         x=sent.index, y=sent["mean"], mode="lines+markers",
         line={"color": ACCENT, "width": 2}, connectgaps=True, name="sentiment",
+        marker={"size": 8}, customdata=sent["count"],
+        hovertemplate="%{x|%b %d, %Y}<br>Avg sentiment %{y:+.2f}"
+                      "<br>%{customdata} headlines · click to view<extra></extra>",
     ), row=1, col=1)
     fig.add_hline(y=0, line_dash="dot", line_color=MUTED, row=1, col=1)
     fig.add_trace(go.Candlestick(

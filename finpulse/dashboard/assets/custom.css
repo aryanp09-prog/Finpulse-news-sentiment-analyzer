@@ -36,3 +36,51 @@ a { transition: color 0.12s ease, opacity 0.12s ease; }
 button { transition: transform 0.1s ease, filter 0.1s ease; }
 button:hover { filter: brightness(1.08); }
 button:active { transform: scale(0.97); }
+
+/* ---- Custom card dropdowns (analytics company + timeframe selectors) ---- */
+.fp-select { position: relative; }
+
+/* the trigger box = the selected card */
+.fp-summary {
+  display: flex;
+  align-items: center;
+  background: #161b22;
+  border: 1px solid #2a3038;
+  border-radius: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.fp-summary > div { flex: 1; min-width: 0; }   /* let the inner card fill the box so the caret sits far-right */
+.fp-summary:hover { border-color: #3a424d; }
+.fp-summary.fp-open {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+}
+
+/* caret flips when open */
+.fp-caret { transition: transform 0.15s ease; }
+.fp-summary.fp-open .fp-caret { transform: rotate(180deg); }
+
+/* the options panel floats below the trigger (doesn't push the page) */
+.fp-select .fp-options {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  background: #161b22;
+  border: 1px solid #2a3038;
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 60;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+  max-height: 340px;
+  overflow-y: auto;
+}
+.fp-option {
+  padding: 9px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.fp-option:hover { background: #1f2630; }

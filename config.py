@@ -14,11 +14,13 @@ STOCKS = {
                  "domain": "hdfcbank.com"},
     "SBIN": {"name": "State Bank of India", "query": "SBI", "yf": "SBIN.NS", "currency": "₹", "market": "IN",
              "sector": "Banking", "peers": ["HDFCBANK"], "keywords": ["state bank", "sbi"],
-             "domain": "sbi.co.in"},
+             "domain": "sbi.co.in",
+             "logo": "https://www.google.com/s2/favicons?domain=onlinesbi.sbi&sz=64"},
     # ---- Retail (India) ----
     "TRENT": {"name": "Trent", "yf": "TRENT.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["DMART"], "keywords": ["trent"],
-              "domain": "trentlimited.com"},
+              "domain": "trentlimited.com",
+              "logo": "https://www.google.com/s2/favicons?domain=westside.com&sz=64"},
     "DMART": {"name": "Avenue Supermarts", "query": "DMart", "yf": "DMART.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["TRENT"], "keywords": ["avenue supermarts", "dmart"],
               "domain": "dmartindia.com"},
@@ -35,7 +37,8 @@ STOCKS = {
                "domain": "marutisuzuki.com"},
     "MM": {"name": "Mahindra & Mahindra", "yf": "M&M.NS", "currency": "₹", "market": "IN",
            "sector": "Automobile", "peers": ["MARUTI"], "keywords": ["mahindra"],
-           "domain": "mahindra.com"},
+           "domain": "mahindra.com",
+           "logo": "https://www.google.com/s2/favicons?domain=auto.mahindra.com&sz=64"},
     # ---- Global ----
     "MSFT": {"name": "Microsoft", "yf": "MSFT", "currency": "$", "market": "US",
              "sector": "Global Tech", "peers": ["NVDA"], "keywords": ["microsoft"],
@@ -65,7 +68,11 @@ def display_name(ticker):
 
 
 def logo_url(ticker, size=64):
-    """Company logo via Google's favicon service — always returns an icon (never a broken image)."""
+    """Company logo. Uses a per-ticker `logo` override if set, else Google's favicon service
+    (which always returns an icon — never a broken image)."""
+    override = STOCKS[ticker].get("logo")
+    if override:
+        return override
     domain = STOCKS[ticker].get("domain")
     if not domain:
         return None
