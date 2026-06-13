@@ -17,7 +17,7 @@ from finpulse.ingestion.news_rss import (
     fetch_rss, fetch_moneycontrol, fetch_economictimes, fetch_cnbc, fetch_reuters,
 )
 from finpulse.sentiment.analyzer import score, label
-from finpulse.sentiment.ticker_tagger import tag
+from finpulse.sentiment.ticker_tagger import tag, is_relevant
 from finpulse.storage.db import init_db, insert_headline, fetch_all
 from config import STOCKS
 
@@ -29,6 +29,8 @@ def ingest(per_company=20):
     seen_titles = {r[1].strip().lower() for r in rows if len(r) > 1 and r[1]}
 
     def store(text, ticker, ts, url):
+        if not is_relevant(text, ticker):     # drop off-topic mis-tags (e.g. "Trent" the footballer)
+            return 0
         title_key = text.strip().lower()
         if (url and url in seen_urls) or title_key in seen_titles:   # dedupe by URL AND title
             return 0

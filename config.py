@@ -17,10 +17,15 @@ STOCKS = {
              "domain": "sbi.co.in",
              "logo": "https://www.google.com/s2/favicons?domain=onlinesbi.sbi&sz=64"},
     # ---- Retail (India) ----
-    "TRENT": {"name": "Trent", "yf": "TRENT.NS", "currency": "₹", "market": "IN",
+    "TRENT": {"name": "Trent", "query": "Trent Ltd", "yf": "TRENT.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["DMART"], "keywords": ["trent"],
               "domain": "trentlimited.com",
-              "logo": "https://www.google.com/s2/favicons?domain=westside.com&sz=64"},
+              "logo": "https://www.google.com/s2/favicons?domain=westside.com&sz=64",
+              # "Trent" also matches: footballer Trent Alexander-Arnold, Nottingham Trent Univ,
+              # the Rolls-Royce Trent aircraft engine, and NFL player Trent Williams.
+              "exclude": ["alexander-arnold", "nottingham", "liverpool", "arsenal", "knicks",
+                          "dumfries", "simonian", "university", "premier league", "midfielder",
+                          "football", "fc ", "rolls-royce", "xwb", "49ers", "nfl"]},
     "DMART": {"name": "Avenue Supermarts", "query": "DMart", "yf": "DMART.NS", "currency": "₹", "market": "IN",
               "sector": "Retail", "peers": ["TRENT"], "keywords": ["avenue supermarts", "dmart"],
               "domain": "dmartindia.com"},
@@ -38,7 +43,9 @@ STOCKS = {
     "MM": {"name": "Mahindra & Mahindra", "yf": "M&M.NS", "currency": "₹", "market": "IN",
            "sector": "Automobile", "peers": ["MARUTI"], "keywords": ["mahindra"],
            "domain": "mahindra.com",
-           "logo": "https://www.google.com/s2/favicons?domain=auto.mahindra.com&sz=64"},
+           "logo": "https://www.google.com/s2/favicons?domain=auto.mahindra.com&sz=64",
+           # keyword "mahindra" also matches the SEPARATE listed company Tech Mahindra (TECHM).
+           "exclude": ["tech mahindra"]},
     # ---- Global ----
     "MSFT": {"name": "Microsoft", "yf": "MSFT", "currency": "$", "market": "US",
              "sector": "Global Tech", "peers": ["NVDA"], "keywords": ["microsoft"],
