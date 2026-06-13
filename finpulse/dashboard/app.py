@@ -740,6 +740,23 @@ def sectors_page():
         html.Div(cards, style={"display": "grid",
                                "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
                                "gap": "14px", "marginTop": "12px"}),
+        # Sector performance comparison (% change over time) — pick any combination of sectors.
+        html.Div([
+            html.Div("Sector Performance — % change", style={"fontSize": "18px", "fontWeight": "800"}),
+            html.P("Compare the average price performance of any sectors over a window — pick one, "
+                   "two, or all of them. Each line is % change from the window's start.",
+                   style={"color": MUTED, "fontSize": "12px", "marginTop": "4px", "marginBottom": "12px"}),
+            html.Div([
+                dcc.Dropdown(id="sector-cmp-select", multi=True, clearable=False,
+                             options=[{"label": s, "value": s} for s in SECTORS],
+                             value=list(SECTORS.keys()), placeholder="Select sectors to compare...",
+                             style={"color": "#000", "flex": "1", "minWidth": "260px"}),
+                dcc.Dropdown(id="sector-cmp-timeframe", clearable=False,
+                             options=[{"label": k, "value": k} for k in TIMEFRAMES],
+                             value="3 Months", style={"color": "#000", "width": "160px"}),
+            ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
+            html.Div(id="sector-cmp", style={"marginTop": "12px"}),
+        ], style={**CARD_STYLE, "flex": "unset", "marginTop": "24px"}),
     ])
 
 
@@ -1028,6 +1045,54 @@ def build_price_comparison(ticker, days):
     ], style={**CARD_STYLE, "flex": "unset", "marginTop": "20px"})
 
 
+# Stable colour per sector so a sector keeps its colour across any selection.
+SECTOR_PALETTE = [ACCENT, "#7ee787", "#f778ba", "#ffa657", "#a371f7", "#56d4dd"]
+SECTOR_COLOR = {s: SECTOR_PALETTE[i % len(SECTOR_PALETTE)] for i, s in enumerate(SECTORS)}
+
+
+def build_sector_comparison(selected, days):
+    """Normalized %-change line per selected sector (avg of the sector's stocks, from window start)."""
+    selected = [s for s in (selected or []) if s in SECTORS]
+    if not selected:
+        return html.Div("Select one or more sectors to compare.",
+                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
+    needed = [t for s in selected for t in SECTORS[s]]
+    yfs = [yf_symbol(t) for t in needed]
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=max(days, 30))
+
+    def _dl():
+        yf.set_tz_cache_location("D:/yf_cache")
+        return yf.download(yfs, start=start.strftime("%Y-%m-%d"),
+                           end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
+                           interval="1d", progress=False)["Close"]
+
+    data = cached(("seccmp", tuple(sorted(yfs)), days), 300, _dl)
+    if data is None or len(data) == 0:
+        return html.Div("Sector comparison data temporarily unavailable (yfinance rate-limited).",
+                        style={"color": MUTED, "padding": "16px 0"})
+
+    fig = go.Figure()
+    for sector in selected:
+        norms = []
+        for t in SECTORS[sector]:
+            ysym = yf_symbol(t)
+            col = data[ysym] if (hasattr(data, "columns") and ysym in data.columns) else data
+            s = col.dropna()
+            if not s.empty:
+                norms.append((s / s.iloc[0] - 1) * 100)
+        if not norms:
+            continue
+        avg = pd.concat(norms, axis=1).mean(axis=1)      # equal-weight the sector's stocks
+        fig.add_trace(go.Scatter(x=avg.index, y=avg, mode="lines", name=sector,
+                                 line={"color": SECTOR_COLOR[sector], "width": 2}))
+    fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
+    fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=360,
+                      margin={"t": 30, "l": 50, "r": 20, "b": 36}, yaxis_title="% change",
+                      legend={"orientation": "h", "y": 1.13, "x": 0})
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
 # ---- Custom dropdown wiring -------------------------------------------------
 # One callback per selector handles BOTH opening/closing (trigger click) and selecting (option
 # click). Open/close is controlled fully via the panel's style so it can't desync like <details>.
@@ -1103,6 +1168,15 @@ def update_ticker_trigger(ticker):
 @app.callback(Output("tf-trigger", "children"), Input("timeframe-dropdown", "value"))
 def update_tf_trigger(tf):
     return _tf_trigger_inner(tf)
+
+
+@app.callback(
+    Output("sector-cmp", "children"),
+    Input("sector-cmp-select", "value"),
+    Input("sector-cmp-timeframe", "value"),
+)
+def update_sector_cmp(sectors, timeframe):
+    return build_sector_comparison(sectors, TIMEFRAMES.get(timeframe, 30))
 
 
 @app.callback(
