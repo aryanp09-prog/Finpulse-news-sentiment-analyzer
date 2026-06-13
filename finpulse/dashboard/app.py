@@ -42,6 +42,11 @@ NEWS_TIMEFRAMES = {"All time": None, **TIMEFRAMES}
 # Each ticker's peers (same sector), for the price-comparison chart.
 PEERS = {t: STOCKS[t]["peers"] for t in TICKERS}
 
+# Tickers grouped by sector (for the Sectors comparison page).
+SECTORS = {}
+for _t in TICKERS:
+    SECTORS.setdefault(STOCKS[_t]["sector"], []).append(_t)
+
 # ----------------------------------------------------------------------------- theme
 BG = "#0e1117"
 PANEL = "#161b22"
@@ -295,7 +300,8 @@ def navlink(label, href):
 
 navbar = html.Div([
     html.Div("📈 FinPulse", style={"fontSize": "20px", "fontWeight": "800", "color": ACCENT}),
-    html.Div([navlink("Home", "/"), navlink("Analytics", "/analytics"), navlink("News", "/news")],
+    html.Div([navlink("Home", "/"), navlink("Analytics", "/analytics"),
+              navlink("Sectors", "/sectors"), navlink("News", "/news")],
              style={"display": "flex", "gap": "8px"}),
 ], style={
     "display": "flex", "justifyContent": "space-between", "alignItems": "center",
@@ -640,6 +646,103 @@ def news_page():
     ])
 
 
+# ----------------------------------------------------------------------------- sectors
+def sector_metrics():
+    """Per-sector aggregates: avg news sentiment, avg fundamental score, avg day change, headlines."""
+    snap = {s["ticker"]: s for s in snapshot()}
+    prices = cached("prices", 300, latest_price_changes)
+    df = headlines_df()
+    counts = df["ticker"].value_counts().to_dict() if not df.empty else {}
+    rows = []
+    for sector, tickers in SECTORS.items():
+        sents = [snap[t]["mean"] for t in tickers if t in snap]
+        pcts = [prices[t]["pct"] for t in tickers if t in prices]
+        funds = []
+        for t in tickers:
+            fs = cached(("fund", t), 600, lambda t=t: fundamental_score(t, peers(t)))[0]
+            if fs is not None:
+                funds.append(fs)
+        rows.append({
+            "sector": sector,
+            "tickers": tickers,
+            "sentiment": sum(sents) / len(sents) if sents else 0.0,
+            "fundamentals": sum(funds) / len(funds) if funds else None,
+            "pct": sum(pcts) / len(pcts) if pcts else None,
+            "headlines": sum(counts.get(t, 0) for t in tickers),
+        })
+    return rows
+
+
+def _sector_card(r):
+    s_color = GREEN if r["sentiment"] > 0.05 else RED if r["sentiment"] < -0.05 else MUTED
+    s_label = "Positive" if r["sentiment"] > 0.05 else "Negative" if r["sentiment"] < -0.05 else "Neutral"
+    f_txt = f"{r['fundamentals']:.0f}/100" if r["fundamentals"] is not None else "NA"
+    p_txt = f"{r['pct']:+.2f}%" if r["pct"] is not None else "NA"
+    p_color = GREEN if (r["pct"] or 0) >= 0 else RED
+
+    constituents = html.Div([
+        dcc.Link([logo_chip(t, 22),
+                  html.Span(t, style={"fontSize": "12px", "fontWeight": "700"})],
+                 href=f"/analytics?ticker={t}",
+                 style={"display": "flex", "alignItems": "center", "gap": "7px", "background": "#1f2630",
+                        "borderRadius": "8px", "padding": "4px 9px 4px 5px", "textDecoration": "none",
+                        "color": TEXT})
+        for t in r["tickers"]
+    ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "margin": "12px 0 14px"})
+
+    def metric(lbl, val, color=TEXT):
+        return html.Div([
+            html.Span(lbl, style={"color": MUTED, "fontSize": "12px"}),
+            html.Span(val, style={"color": color, "fontWeight": "700", "fontSize": "13px"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "padding": "6px 0",
+                  "borderTop": f"1px solid {BORDER}"})
+
+    return html.Div([
+        html.Div(r["sector"], style={"fontSize": "17px", "fontWeight": "800"}),
+        constituents,
+        metric("News sentiment", f"{s_label}  {r['sentiment']:+.2f}", s_color),
+        metric("Avg fundamentals", f_txt),
+        metric("Avg day change", p_txt, p_color),
+        metric("Headlines", str(r["headlines"])),
+    ], className="ticker-card", style={**CARD_STYLE, "minWidth": "unset"})
+
+
+def sectors_page():
+    metrics = sector_metrics()
+    pts = [r for r in metrics if r["fundamentals"] is not None]
+    fig = go.Figure()
+    if pts:
+        colors = [GREEN if r["sentiment"] > 0.05 else RED if r["sentiment"] < -0.05 else AMBER
+                  for r in pts]
+        fig.add_trace(go.Scatter(
+            x=[r["fundamentals"] for r in pts], y=[r["sentiment"] for r in pts],
+            mode="markers+text", text=[r["sector"] for r in pts], textposition="top center",
+            textfont={"color": TEXT, "size": 12},
+            marker={"size": 26, "color": colors, "line": {"color": "#fff", "width": 1}},
+            customdata=[r["headlines"] for r in pts],
+            hovertemplate="<b>%{text}</b><br>Avg fundamentals %{x:.0f}/100"
+                          "<br>Avg sentiment %{y:+.2f}<br>%{customdata} headlines<extra></extra>",
+        ))
+    fig.add_vline(x=50, line_dash="dot", line_color=MUTED)
+    fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
+    fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=440,
+                      margin={"t": 30, "l": 60, "r": 30, "b": 50}, showlegend=False,
+                      xaxis_title="Avg fundamental score (0-100)", yaxis_title="Avg news sentiment",
+                      xaxis_range=[0, 100], yaxis_range=[-1, 1])
+
+    cards = [_sector_card(r) for r in metrics]
+    return html.Div([
+        html.H2("Sector Comparison"),
+        html.P("Each sector placed by its average fundamentals (x) and news sentiment (y). "
+               "Top-right = strong business + positive news; bottom-left = weak + disliked. "
+               "Click a stock chip to drill into its analytics.", style={"color": MUTED}),
+        dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"marginBottom": "8px"}),
+        html.Div(cards, style={"display": "grid",
+                               "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
+                               "gap": "14px", "marginTop": "12px"}),
+    ])
+
+
 # ----------------------------------------------------------------------------- routing
 def _ticker_from_search(search):
     if search:
@@ -653,6 +756,8 @@ def _ticker_from_search(search):
 def render(pathname, search):
     if pathname == "/analytics":
         return analytics_page(_ticker_from_search(search))
+    if pathname == "/sectors":
+        return sectors_page()
     if pathname == "/news":
         return news_page()
     return home_page()
