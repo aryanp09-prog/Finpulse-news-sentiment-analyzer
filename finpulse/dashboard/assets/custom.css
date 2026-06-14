@@ -84,3 +84,36 @@ button:active { transform: scale(0.97); }
   transition: background 0.12s ease;
 }
 .fp-option:hover { background: #1f2630; }
+
+/* ---- Modern dark dropdowns (News page filters; react-select based) ---- */
+.fp-dropdown .Select-control {
+  background: #161b22; border: 1px solid #2a3038; border-radius: 10px;
+  min-height: 46px; display: flex; align-items: center; cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.fp-dropdown .Select-control:hover { border-color: #3a424d; }
+.fp-dropdown.is-open > .Select-control,
+.fp-dropdown.is-focused:not(.is-open) > .Select-control {
+  border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+}
+.fp-dropdown .Select--single > .Select-control .Select-value {
+  position: static; display: flex !important; align-items: center;
+}
+/* force readable light text on everything inside (version-proof) */
+.fp-dropdown .Select-control, .fp-dropdown .Select-control * { color: #e6edf3 !important; }
+.fp-dropdown .Select-placeholder { color: #8b949e !important; display: flex; align-items: center; }
+.fp-dropdown .Select-input > input { color: #e6edf3 !important; }
+.fp-dropdown .Select-menu-outer {
+  background: #161b22; border: 1px solid #2a3038; border-radius: 10px; margin-top: 6px;
+  overflow: hidden; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); z-index: 40;
+}
+.fp-dropdown .Select-menu-outer, .fp-dropdown .Select-menu-outer * { color: #e6edf3 !important; }
+.fp-dropdown .Select-option { background: #161b22; padding: 9px 12px; }
+.fp-dropdown .Select-option.is-focused { background: #1f2630; }
+.fp-dropdown .Select-option.is-selected { background: #232c38; }
+.fp-dropdown .Select-arrow { border-color: #8b949e transparent transparent; }
+.fp-dropdown.is-open .Select-arrow { border-color: transparent transparent #58a6ff; }
+
+/* News rows: subtle hover */
+.news-row { transition: background 0.12s ease; }
+.news-row:hover { background: #1a2027; }

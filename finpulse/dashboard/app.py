@@ -164,18 +164,68 @@ def timeframe_selector(tf):
 
 
 # ----------------------------------------------------------------------------- caching
-# yfinance throttles if called too often. Cache results briefly so the 60s auto-refresh
-# and repeated page loads reuse data instead of hammering Yahoo (prices are ~15min delayed anyway).
+# yfinance throttles if called too often. Cache results so the 60s auto-refresh and repeated
+# page loads reuse data instead of hammering Yahoo. The cache is:
+#   - PERSISTENT: dumped to disk so it survives restarts (run warmup.py to pre-fill it).
+#   - STALE-TOLERANT: if a fetch fails (yfinance rate-limited -> None/empty), serve the last
+#     known-good value instead of showing NA. Critical for live demos / presentations.
+import os
+import pickle
+
+_CACHE_FILE = "D:/yf_cache/finpulse_cache.pkl"
+# Multiply every TTL — bigger = fewer yfinance calls (less rate-limiting). Default 6x is
+# presentation-safe; set CACHE_TTL_MULT=1 for freshest data, or higher for a long demo.
+_TTL_MULT = float(os.environ.get("CACHE_TTL_MULT", "6"))
 _CACHE = {}
+try:
+    if os.path.exists(_CACHE_FILE):
+        with open(_CACHE_FILE, "rb") as _f:
+            _CACHE = pickle.load(_f)
+except Exception:
+    _CACHE = {}
+
+
+def _looks_empty(value):
+    """True if a fetch result means 'no data' (so we should keep the previous cached value)."""
+    if value is None:
+        return True
+    if isinstance(value, dict) and not value:
+        return True
+    if isinstance(value, tuple) and value and value[0] is None:   # fundamental_score(...) failed
+        return True
+    try:
+        if hasattr(value, "empty") and value.empty:              # empty DataFrame / Series
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _persist_cache():
+    try:
+        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
+        tmp = _CACHE_FILE + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump(_CACHE, f)
+        os.replace(tmp, _CACHE_FILE)        # atomic — never leave a half-written file
+    except Exception:
+        pass
 
 
 def cached(key, ttl, fn):
     now = time.time()
+    ttl = ttl * _TTL_MULT
     hit = _CACHE.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
-    value = fn()
+    try:
+        value = fn()
+    except Exception:
+        value = None
+    if _looks_empty(value) and hit is not None:
+        return hit[1]                       # fetch failed -> serve last known-good (stale) value
     _CACHE[key] = (now, value)
+    _persist_cache()
     return value
 
 
@@ -597,7 +647,10 @@ def build_day_detail(ticker, day):
 
 def _filter_news_df(df, ticker="All", sentiment="All", timeframe="All time"):
     if ticker and ticker != "All":
-        df = df[df["ticker"] == ticker]
+        if ticker.startswith("sector:"):                       # whole sector -> all its stocks
+            df = df[df["ticker"].isin(SECTORS.get(ticker.split(":", 1)[1], []))]
+        else:
+            df = df[df["ticker"] == ticker]
     if sentiment and sentiment != "All":
         df = df[df["label"] == sentiment]
     days = NEWS_TIMEFRAMES.get(timeframe)
@@ -625,23 +678,69 @@ def build_news_feed(ticker="All", sentiment="All", timeframe="All time"):
     return html.Div(rows, style={**CARD_STYLE, "flex": "unset", "padding": "0", "overflow": "hidden"})
 
 
+_SENT_LABELS = {"All": "All sentiment", "positive": "Positive",
+                "neutral": "Neutral", "negative": "Negative"}
+
+
+def _label_for(kind, val):
+    """Build the display label (component or text) for a filter value."""
+    if kind == "sent":
+        return _SENT_LABELS.get(val, val)
+    if kind == "tf":
+        return val
+    # kind == "scope"
+    if val == "All":
+        return html.Span("All tickers", style={"fontWeight": "600"})
+    if str(val).startswith("sector:"):
+        s = val.split(":", 1)[1]
+        return html.Span([
+            html.Span(style={"width": "10px", "height": "10px", "borderRadius": "50%",
+                             "background": SECTOR_COLOR.get(s, MUTED), "display": "inline-block",
+                             "marginRight": "10px", "flexShrink": "0"}),
+            html.Span(s, style={"fontWeight": "700"}),
+            html.Span("sector", style={"opacity": "0.55", "marginLeft": "6px", "fontSize": "11px"}),
+        ], style={"display": "flex", "alignItems": "center"})
+    return html.Span([                                            # a ticker -> logo + name + symbol
+        html.Img(src=logo_url(val), style={"width": "20px", "height": "20px", "borderRadius": "5px",
+                 "background": "#fff", "padding": "2px", "objectFit": "contain", "marginRight": "10px",
+                 "boxSizing": "border-box", "flexShrink": "0"}),
+        html.Span(display_name(val), style={"fontWeight": "600"}),
+        html.Span(val, style={"opacity": "0.55", "marginLeft": "7px", "fontSize": "12px"}),
+    ], style={"display": "flex", "alignItems": "center"})
+
+
+def custom_select(cid, kind, values, value, width=None):
+    """A dark card dropdown (same look as Analytics) that drives a hidden dcc.Dropdown id=cid."""
+    box = {"flex": "1", "minWidth": "250px"} if width is None else {"width": width}
+    return html.Div([
+        html.Div([
+            html.Div(_label_for(kind, value), id=f"{cid}-label",
+                     style={"display": "flex", "alignItems": "center", "flex": "1", "minWidth": 0}),
+            html.Span("▾", className="fp-caret",
+                      style={"marginLeft": "10px", "color": MUTED, "fontSize": "14px", "flexShrink": "0"}),
+        ], id=f"{cid}-trigger", n_clicks=0, className="fp-summary"),
+        html.Div([
+            html.Div(_label_for(kind, v), id={"type": f"{cid}-opt", "val": v}, n_clicks=0,
+                     className="fp-option")
+            for v in values
+        ], id=f"{cid}-opts", className="fp-options", style={"display": "none"}),
+        dcc.Dropdown(id=cid, value=value, clearable=False, style={"display": "none"},
+                     options=[{"label": str(v), "value": v} for v in values]),
+    ], className="fp-select", style=box)
+
+
 def news_page():
-    drop = {"width": "190px", "color": "#000"}
+    scope_vals = ["All"] + [f"sector:{s}" for s in SECTORS] + list(TICKERS)
     return html.Div([
         html.H2("All News"),
         html.P(_news_count_text(), id="news-count", style={"color": MUTED}),
         html.Div([
-            dcc.Dropdown(id="news-ticker", clearable=False, value="All", style=drop,
-                         options=[{"label": "All tickers", "value": "All"}]
-                                 + [{"label": t, "value": t} for t in TICKERS]),
-            dcc.Dropdown(id="news-sentiment", clearable=False, value="All", style=drop,
-                         options=[{"label": "All sentiment", "value": "All"},
-                                  {"label": "Positive", "value": "positive"},
-                                  {"label": "Neutral", "value": "neutral"},
-                                  {"label": "Negative", "value": "negative"}]),
-            dcc.Dropdown(id="news-timeframe", clearable=False, value="All time", style=drop,
-                         options=[{"label": k, "value": k} for k in NEWS_TIMEFRAMES]),
-        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "16px"}),
+            custom_select("news-ticker", "scope", scope_vals, "All"),
+            custom_select("news-sentiment", "sent", ["All", "positive", "neutral", "negative"],
+                          "All", width="185px"),
+            custom_select("news-timeframe", "tf", list(NEWS_TIMEFRAMES), "All time", width="170px"),
+        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "16px",
+                  "alignItems": "flex-start"}),
         html.Div(id="news-list", children=build_news_feed()),
     ])
 
@@ -1177,6 +1276,36 @@ def update_tf_trigger(tf):
 )
 def update_sector_cmp(sectors, timeframe):
     return build_sector_comparison(sectors, TIMEFRAMES.get(timeframe, 30))
+
+
+def _register_custom_select(cid, kind):
+    """Wire a custom_select: trigger toggles the panel; clicking an option sets the value + label."""
+    @app.callback(
+        Output(f"{cid}-opts", "style"),
+        Output(f"{cid}-trigger", "className"),
+        Output(cid, "value"),
+        Output(f"{cid}-label", "children"),
+        Input(f"{cid}-trigger", "n_clicks"),
+        Input({"type": f"{cid}-opt", "val": ALL}, "n_clicks"),
+        State(f"{cid}-opts", "style"),
+        prevent_initial_call=True,
+    )
+    def _dd(_trig, opt_clicks, style, _cid=cid, _kind=kind):
+        style = dict(style or {})
+        trig = ctx.triggered_id
+        if trig == f"{_cid}-trigger":                              # open/close
+            opening = style.get("display") != "block"
+            style["display"] = "block" if opening else "none"
+            return style, ("fp-summary fp-open" if opening else "fp-summary"), no_update, no_update
+        if isinstance(trig, dict) and any(opt_clicks):            # picked an option
+            style["display"] = "none"
+            return style, "fp-summary", trig["val"], _label_for(_kind, trig["val"])
+        raise PreventUpdate
+
+
+_register_custom_select("news-ticker", "scope")
+_register_custom_select("news-sentiment", "sent")
+_register_custom_select("news-timeframe", "tf")
 
 
 @app.callback(
