@@ -369,6 +369,16 @@ app.layout = html.Div([
 
 
 # ----------------------------------------------------------------------------- pages
+def page_header(title, subtitle, sub_id=None):
+    """Modern page header: gradient accent bar + gradient title + muted subtitle."""
+    sub_kwargs = {"id": sub_id} if sub_id else {}
+    return html.Div([
+        html.Div(className="fp-accent-bar"),
+        html.H1(title, className="fp-page-title"),
+        html.P(subtitle, className="fp-page-sub", **sub_kwargs),
+    ], style={"marginBottom": "22px"})
+
+
 def build_home_content():
     snap = snapshot()
     prices = cached("prices", 300, latest_price_changes)
@@ -507,11 +517,8 @@ def build_home_content():
 def home_page():
     return html.Div([
         html.Div([
-            html.Div([
-                html.H2("Market Overview", style={"marginBottom": "4px"}),
-                html.P("Latest daily price move per ticker — sentiment shown underneath.",
-                       style={"color": MUTED, "marginTop": 0}),
-            ]),
+            page_header("Market Overview",
+                        "Latest daily price move per ticker — sentiment shown underneath."),
             html.Button("🔄 Fetch latest news", id="fetch-btn", n_clicks=0, style={
                 "background": ACCENT, "color": "#fff", "border": "none", "borderRadius": "8px",
                 "padding": "10px 16px", "fontWeight": "700", "cursor": "pointer", "height": "fit-content",
@@ -526,8 +533,7 @@ def home_page():
 def analytics_page(default_ticker=None):
     ticker_value = default_ticker if default_ticker in TICKERS else TICKERS[0]
     return html.Div([
-        html.H2("Analytics"),
-        html.P("Sentiment vs. price — aligned on the same time axis.", style={"color": MUTED}),
+        page_header("Analytics", "Sentiment vs. price — aligned on the same time axis."),
         html.Div([
             html.Div(ticker_selector(ticker_value), style={"flex": "2", "minWidth": "320px"}),
             html.Div(timeframe_selector("Daily"), style={"flex": "1", "minWidth": "210px"}),
@@ -732,8 +738,7 @@ def custom_select(cid, kind, values, value, width=None):
 def news_page():
     scope_vals = ["All"] + [f"sector:{s}" for s in SECTORS] + list(TICKERS)
     return html.Div([
-        html.H2("All News"),
-        html.P(_news_count_text(), id="news-count", style={"color": MUTED}),
+        page_header("All News", _news_count_text(), sub_id="news-count"),
         html.Div([
             custom_select("news-ticker", "scope", scope_vals, "All"),
             custom_select("news-sentiment", "sent", ["All", "positive", "neutral", "negative"],
@@ -831,10 +836,10 @@ def sectors_page():
 
     cards = [_sector_card(r) for r in metrics]
     return html.Div([
-        html.H2("Sector Comparison"),
-        html.P("Each sector placed by its average fundamentals (x) and news sentiment (y). "
-               "Top-right = strong business + positive news; bottom-left = weak + disliked. "
-               "Click a stock chip to drill into its analytics.", style={"color": MUTED}),
+        page_header("Sector Comparison",
+                    "Each sector placed by its average fundamentals (x) and news sentiment (y). "
+                    "Top-right = strong business + positive news; bottom-left = weak + disliked. "
+                    "Click a stock chip to drill into its analytics."),
         dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"marginBottom": "8px"}),
         html.Div(cards, style={"display": "grid",
                                "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
