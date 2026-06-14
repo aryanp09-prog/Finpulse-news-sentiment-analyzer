@@ -1019,6 +1019,8 @@ def build_news_summary(ticker, ohlc, timeframe):
         ("Market Cap", _fmt_money(fraw.get("market_cap")), None),
         ("ROE", _fmt_num(fraw.get("roe") * 100 if fraw.get("roe") is not None else None, "%", 2),
          "Return on equity; higher is generally better."),
+        ("ROA", _fmt_num(fraw.get("roa") * 100 if fraw.get("roa") is not None else None, "%", 2),
+         "Return on assets; the key efficiency metric for banks (undistorted by leverage)."),
         ("P/E Ratio (TTM)", _fmt_num(fraw.get("pe"), "", 2), "Trailing price-to-earnings ratio."),
         ("EPS (TTM)", _fmt_num(fraw.get("eps"), "", 2), "Trailing earnings per share."),
         ("P/B Ratio", _fmt_num(fraw.get("pb"), "", 2), "Price-to-book ratio."),

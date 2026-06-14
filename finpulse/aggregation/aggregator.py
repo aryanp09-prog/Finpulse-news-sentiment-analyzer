@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 import yfinance as yf
 from finpulse.storage.db import DB_PATH
-from config import yf_symbol
+from config import yf_symbol, STOCKS
 
 def load_sentiment(ticker):
     conn = sqlite3.connect(DB_PATH)
@@ -105,11 +105,23 @@ BASE_FUNDAMENTAL_WEIGHTS = {
     "debt_to_equity": 20,
 }
 
+# Banks earn THROUGH debt (deposits/borrowings), so debt-to-equity is meaningless for them,
+# and ROE is leverage-distorted. Use ROA (true efficiency) instead, and tilt toward quality
+# (ROE + ROA) over cheapness (PE + PB) — a "cheap" bank is often cheap because of bad assets.
+BANK_FUNDAMENTAL_WEIGHTS = {
+    "pe_vs_industry": 20,
+    "pb_vs_industry": 20,
+    "roe": 30,
+    "roa": 30,
+}
+FINANCIAL_SECTORS = {"Banking"}            # sectors that use the bank weight profile
+
 FUNDAMENTAL_LABELS = {
     "pe_vs_industry": "PE vs industry",
     "pb_vs_industry": "PB vs industry",
     "roe": "ROE",
     "debt_to_equity": "Debt",
+    "roa": "ROA",
 }
 
 
@@ -198,6 +210,7 @@ def load_fundamentals(ticker):
         "pe": info.get("trailingPE"),
         "pb": info.get("priceToBook"),
         "roe": info.get("returnOnEquity"),     # fraction, e.g. 0.18
+        "roa": info.get("returnOnAssets"),     # fraction; the key efficiency metric for banks
         "debt": info.get("debtToEquity"),      # yfinance gives a %-style number, e.g. 120 == 1.2x
         "eps": info.get("trailingEps"),
         "dividend_yield": dividend_yield,
@@ -230,11 +243,14 @@ def fundamental_score(ticker, peers):
     f["industry_pe"] = ind_pe
     f["industry_pb"] = ind_pb
 
+    # Banks use a different metric set + weights (ROA instead of debt; quality-tilted).
+    is_financial = STOCKS.get(ticker, {}).get("sector") in FINANCIAL_SECTORS
+    weights = BANK_FUNDAMENTAL_WEIGHTS if is_financial else BASE_FUNDAMENTAL_WEIGHTS
+
     raw_scores = {}
     pe = _to_float(f.get("pe"))
     pb = _to_float(f.get("pb"))
     roe = _to_float(f.get("roe"))
-    debt = _to_float(f.get("debt"))
 
     if pe is not None and pe > 0 and ind_pe is not None and ind_pe > 0:
         raw_scores["pe_vs_industry"] = _clamp(50 - (pe / ind_pe - 1) * 100)
@@ -242,22 +258,28 @@ def fundamental_score(ticker, peers):
         raw_scores["pb_vs_industry"] = _clamp(50 - (pb / ind_pb - 1) * 100)
     if roe is not None:
         raw_scores["roe"] = _clamp(roe * 400)                # higher = better (0.25 ROE -> 100)
-    if debt is not None:
-        raw_scores["debt_to_equity"] = _clamp(100 - debt / 2) # lower = better (D/E 200% -> 0)
+    if is_financial:
+        roa = _to_float(f.get("roa"))
+        if roa is not None:
+            raw_scores["roa"] = _clamp(roa * 5000)           # banks: 2% ROA -> 100 (no leverage distortion)
+    else:
+        debt = _to_float(f.get("debt"))
+        if debt is not None:
+            raw_scores["debt_to_equity"] = _clamp(100 - debt / 2)  # lower = better (D/E 200% -> 0)
 
-    total_valid_weight = sum(BASE_FUNDAMENTAL_WEIGHTS[key] for key in raw_scores)
+    total_valid_weight = sum(weights[key] for key in raw_scores)
     if len(raw_scores) < 2 or total_valid_weight <= 0:        # too little data to be meaningful
         comps = {FUNDAMENTAL_LABELS[key]: (score, 0.0) for key, score in raw_scores.items()}
-        return None, comps, len(raw_scores), len(BASE_FUNDAMENTAL_WEIGHTS), f
+        return None, comps, len(raw_scores), len(weights), f
 
     comps = {}
     weighted_score = 0.0
     for key, raw_score in raw_scores.items():
-        active_weight = BASE_FUNDAMENTAL_WEIGHTS[key] / (total_valid_weight / 100.0)
+        active_weight = weights[key] / (total_valid_weight / 100.0)
         comps[FUNDAMENTAL_LABELS[key]] = (raw_score, active_weight)
         weighted_score += raw_score * (active_weight / 100.0)
 
-    return _clamp(weighted_score), comps, len(raw_scores), len(BASE_FUNDAMENTAL_WEIGHTS), f
+    return _clamp(weighted_score), comps, len(raw_scores), len(weights), f
 
 
 def verdict(fund_score, avg_sentiment):
