@@ -229,6 +229,27 @@ def cached(key, ttl, fn):
     return value
 
 
+# ----------------------------------------------------------------------------- currency
+USD_INR_FALLBACK = 85.0
+
+
+def usd_inr():
+    """Live USD->INR rate (cached, stale-tolerant). Falls back to a constant if unavailable."""
+    def _fetch():
+        yf.set_tz_cache_location("D:/yf_cache")
+        s = yf.download("USDINR=X", period="5d", interval="1d", progress=False)["Close"].dropna()
+        return float(s.iloc[-1]) if len(s) else None
+    rate = cached("usdinr", 3600, _fetch)
+    return rate if rate else USD_INR_FALLBACK
+
+
+def to_inr(value, ticker):
+    """Convert a money value to INR based on the ticker's native currency ($ stocks -> x rate)."""
+    if value is None:
+        return None
+    return value * (usd_inr() if currency(ticker) == "$" else 1.0)
+
+
 # ----------------------------------------------------------------------------- data helpers
 def headlines_df():
     cols = ["id", "text", "ticker", "score", "label", "timestamp", "url"]
@@ -400,7 +421,7 @@ def build_home_content():
         if pc:
             pcolor = GREEN if pc["pct"] >= 0 else RED
             price_block = [
-                html.Div(f"{currency(t)}{pc['price']:,.2f}",
+                html.Div(f"₹{to_inr(pc['price'], t):,.2f}",
                          style={"fontSize": "22px", "fontWeight": "800", "marginTop": "10px"}),
                 html.Span(f"{pc['pct']:+.2f}% today",
                           style={"fontSize": "13px", "fontWeight": "700", "color": pcolor}),
@@ -967,16 +988,8 @@ def build_news_summary(ticker, ohlc, timeframe):
     def _fmt_money(value):
         if value is None:
             return "NA"
-        cur = currency(ticker)
-        if cur == "₹":
-            return f"₹{value / 10_000_000:,.0f}Cr"
-        if abs(value) >= 1_000_000_000_000:
-            return f"{cur}{value / 1_000_000_000_000:,.2f}T"
-        if abs(value) >= 1_000_000_000:
-            return f"{cur}{value / 1_000_000_000:,.2f}B"
-        if abs(value) >= 1_000_000:
-            return f"{cur}{value / 1_000_000:,.2f}M"
-        return f"{cur}{value:,.0f}"
+        value = to_inr(value, ticker)              # show everything in INR (Crores)
+        return f"₹{value / 10_000_000:,.0f}Cr"
 
     def _fund_row(label, value, hint=None):
         label_bits = [html.Span(label, style={"color": MUTED})]
@@ -1014,11 +1027,11 @@ def build_news_summary(ticker, ohlc, timeframe):
         ("ROA", _fmt_num(fraw.get("roa") * 100 if fraw.get("roa") is not None else None, "%", 2),
          "Return on assets; the key efficiency metric for banks (undistorted by leverage)."),
         ("P/E Ratio (TTM)", _fmt_num(fraw.get("pe"), "", 2), "Trailing price-to-earnings ratio."),
-        ("EPS (TTM)", _fmt_num(fraw.get("eps"), "", 2), "Trailing earnings per share."),
+        ("EPS (TTM)", _fmt_num(to_inr(fraw.get("eps"), ticker), "", 2), "Trailing earnings per share."),
         ("P/B Ratio", _fmt_num(fraw.get("pb"), "", 2), "Price-to-book ratio."),
         ("Dividend Yield", fraw.get("dividend_yield_display", "NA"), None),
         ("Industry P/E", _fmt_num(fraw.get("industry_pe"), "", 2), "Average P/E across configured peers."),
-        ("Book Value", _fmt_num(fraw.get("book_value"), "", 2), None),
+        ("Book Value", _fmt_num(to_inr(fraw.get("book_value"), ticker), "", 2), None),
         ("Debt to Equity", _fmt_num(fraw.get("debt") / 100 if fraw.get("debt") is not None else None, "", 2), None),
         ("Face Value", _fmt_num(fraw.get("face_value"), "", 2), None),
     ]
@@ -1336,6 +1349,12 @@ def update_charts(ticker, timeframe, _tick):
         note = html.Div(msg, style={**CARD_STYLE, "flex": "unset", "color": MUTED, "marginTop": "20px"})
         return empty, html.Div(), note
 
+    if currency(ticker) == "$":                     # show US stocks in INR too (copy: don't mutate cache)
+        rate = usd_inr()
+        ohlc = ohlc.copy()
+        for col in ("Open", "High", "Low", "Close"):
+            ohlc[col] = ohlc[col] * rate
+
     sent = aggregate_sentiment(ticker, "1D")        # always daily buckets
     sent = sent[sent.index >= ohlc.index.min()]     # trim sentiment to the timeframe
 
@@ -1363,7 +1382,7 @@ def update_charts(ticker, timeframe, _tick):
         xaxis2_rangeslider_visible=False,
     )
     fig.update_yaxes(title_text="Sentiment", range=[-1, 1], row=1, col=1)
-    fig.update_yaxes(title_text=f"Price ({currency(ticker)})", row=2, col=1)
+    fig.update_yaxes(title_text="Price (₹)", row=2, col=1)
     return fig, build_price_comparison(ticker, days), build_news_summary(ticker, ohlc, timeframe)
 
 
