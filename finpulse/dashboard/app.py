@@ -876,12 +876,17 @@ def sectors_page():
                 dcc.Dropdown(id="sector-cmp-select", multi=True, clearable=False,
                              options=[{"label": s, "value": s} for s in SECTORS],
                              value=list(SECTORS.keys()), placeholder="Select sectors to compare...",
-                             style={"color": "#000", "flex": "1", "minWidth": "260px"}),
+                             style={"color": "#000", "flex": "1", "minWidth": "240px"}),
+                dcc.Dropdown(id="sector-trend", clearable=False,
+                             options=[{"label": f"Trend: {t}", "value": t}
+                                      for t in ["All", "Bullish", "Sideways", "Bearish"]],
+                             value="All", style={"color": "#000", "width": "150px"}),
                 dcc.Dropdown(id="sector-cmp-timeframe", clearable=False,
                              options=[{"label": k, "value": k} for k in TIMEFRAMES],
-                             value="3 Months", style={"color": "#000", "width": "160px"}),
+                             value="3 Months", style={"color": "#000", "width": "150px"}),
             ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
             html.Div(id="sector-cmp", style={"marginTop": "12px"}),
+            html.Div(id="sector-summary"),
         ], style={**CARD_STYLE, "flex": "unset", "marginTop": "24px"}),
     ])
 
@@ -1170,12 +1175,21 @@ SECTOR_PALETTE = [ACCENT, "#7ee787", "#f778ba", "#ffa657", "#a371f7", "#56d4dd"]
 SECTOR_COLOR = {s: SECTOR_PALETTE[i % len(SECTOR_PALETTE)] for i, s in enumerate(SECTORS)}
 
 
-def build_sector_comparison(selected, days):
-    """Normalized %-change line per selected sector (avg of the sector's stocks, from window start)."""
+def _trend_label(pct):
+    """Classify a sector by its window %-change: Bullish >= +5%, Bearish <= -5%, else Sideways."""
+    if pct >= 5:
+        return "Bullish", GREEN
+    if pct <= -5:
+        return "Bearish", RED
+    return "Sideways", AMBER
+
+
+def sector_performance(selected, days):
+    """{sector: {'series': normalized %-change series, 'pct': final %-change}} for selected sectors."""
     selected = [s for s in (selected or []) if s in SECTORS]
+    out = {}
     if not selected:
-        return html.Div("Select one or more sectors to compare.",
-                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
+        return out
     needed = [t for s in selected for t in SECTORS[s]]
     yfs = [yf_symbol(t) for t in needed]
     end = datetime.now(timezone.utc)
@@ -1189,10 +1203,7 @@ def build_sector_comparison(selected, days):
 
     data = cached(("seccmp", tuple(sorted(yfs)), days), 300, _dl)
     if data is None or len(data) == 0:
-        return html.Div("Sector comparison data temporarily unavailable (yfinance rate-limited).",
-                        style={"color": MUTED, "padding": "16px 0"})
-
-    fig = go.Figure()
+        return out
     for sector in selected:
         norms = []
         for t in SECTORS[sector]:
@@ -1203,14 +1214,81 @@ def build_sector_comparison(selected, days):
                 norms.append((s / s.iloc[0] - 1) * 100)
         if not norms:
             continue
-        avg = pd.concat(norms, axis=1).mean(axis=1)      # equal-weight the sector's stocks
-        fig.add_trace(go.Scatter(x=avg.index, y=avg, mode="lines", name=sector,
+        avg = pd.concat(norms, axis=1).mean(axis=1).dropna()   # equal-weight the sector's stocks
+        if not avg.empty:
+            out[sector] = {"series": avg, "pct": float(avg.iloc[-1])}
+    return out
+
+
+def build_sector_comparison(selected, days, trend="All"):
+    """Normalized %-change line per selected sector, optionally filtered to a trend bucket."""
+    perf = sector_performance(selected, days)
+    if not perf:
+        return html.Div("Select one or more sectors (or data temporarily unavailable).",
+                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
+    fig = go.Figure()
+    shown = 0
+    for sector, d in perf.items():
+        if trend != "All" and _trend_label(d["pct"])[0] != trend:
+            continue
+        shown += 1
+        fig.add_trace(go.Scatter(x=d["series"].index, y=d["series"], mode="lines", name=sector,
                                  line={"color": SECTOR_COLOR[sector], "width": 2}))
+    if shown == 0:
+        return html.Div(f"No {trend.lower()} sectors in the selected window.",
+                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
     fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
     fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=360,
                       margin={"t": 30, "l": 50, "r": 20, "b": 36}, yaxis_title="% change",
                       legend={"orientation": "h", "y": 1.13, "x": 0})
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+def build_sector_summary(selected, days):
+    """Standings + a 'most aligned' takeaway combining momentum, sentiment and fundamentals."""
+    perf = sector_performance(selected, days)
+    if not perf:
+        return html.Div()
+    metrics = {m["sector"]: m for m in sector_metrics()}
+
+    def _composite(item):
+        sector, d = item
+        m = metrics.get(sector, {})
+        fund = m.get("fundamentals") if m.get("fundamentals") is not None else 50
+        return d["pct"] + m.get("sentiment", 0.0) * 40 + (fund - 50)   # momentum + sentiment + value
+
+    ranked = sorted(perf.items(), key=lambda kv: kv[1]["pct"], reverse=True)
+    bsec, bd = max(perf.items(), key=_composite)
+    blabel, bcolor = _trend_label(bd["pct"])
+    bm = metrics.get(bsec, {})
+    bfund = f"{bm['fundamentals']:.0f}/100" if bm.get("fundamentals") is not None else "NA"
+
+    def _row(sector, d):
+        label, color = _trend_label(d["pct"])
+        m = metrics.get(sector, {})
+        fund = f"{m['fundamentals']:.0f}/100" if m.get("fundamentals") is not None else "NA"
+        return html.Div([
+            html.Span(sector, style={"fontWeight": "700", "minWidth": "130px"}),
+            html.Span(label, style={"color": color, "fontWeight": "700", "minWidth": "78px"}),
+            html.Span(f"{d['pct']:+.1f}%", style={"color": color, "fontWeight": "700", "minWidth": "64px"}),
+            html.Span(f"news {m.get('sentiment', 0.0):+.2f}  ·  fundamentals {fund}",
+                      style={"color": MUTED, "fontSize": "12px"}),
+        ], style={"display": "flex", "gap": "14px", "alignItems": "center", "padding": "8px 0",
+                  "borderTop": f"1px solid {BORDER}", "flexWrap": "wrap"})
+
+    return html.Div([
+        html.Div("Where the sectors stand", style={"fontSize": "15px", "fontWeight": "800"}),
+        html.Div([
+            html.Span("Most aligned right now: ", style={"color": MUTED}),
+            html.Span(bsec, style={"color": bcolor, "fontWeight": "800"}),
+            html.Span(f" — {blabel.lower()} momentum ({bd['pct']:+.1f}%), news "
+                      f"{bm.get('sentiment', 0.0):+.2f}, fundamentals {bfund}.", style={"color": TEXT}),
+        ], style={"fontSize": "13.5px", "margin": "8px 0 6px", "lineHeight": "1.5"}),
+        *[_row(s, d) for s, d in ranked],
+        html.Div("Bullish ≥ +5% · Sideways · Bearish ≤ −5% over the window. 'Most aligned' blends "
+                 "price momentum, news sentiment and fundamentals — educational, not advice.",
+                 style={"color": MUTED, "fontSize": "11px", "marginTop": "10px", "lineHeight": "1.45"}),
+    ], style={"marginTop": "16px", "paddingTop": "14px", "borderTop": f"1px solid {BORDER}"})
 
 
 # ---- Custom dropdown wiring -------------------------------------------------
@@ -1312,11 +1390,14 @@ def update_tf_trigger(tf):
 
 @app.callback(
     Output("sector-cmp", "children"),
+    Output("sector-summary", "children"),
     Input("sector-cmp-select", "value"),
     Input("sector-cmp-timeframe", "value"),
+    Input("sector-trend", "value"),
 )
-def update_sector_cmp(sectors, timeframe):
-    return build_sector_comparison(sectors, TIMEFRAMES.get(timeframe, 30))
+def update_sector_cmp(sectors, timeframe, trend):
+    days = TIMEFRAMES.get(timeframe, 30)
+    return build_sector_comparison(sectors, days, trend), build_sector_summary(sectors, days)
 
 
 def _register_custom_select(cid, kind):
