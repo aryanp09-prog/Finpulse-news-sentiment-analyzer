@@ -573,6 +573,7 @@ def analytics_page(default_ticker=None):
         html.Div(id="price-comparison"),
         html.Div(id="news-summary"),
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),   # redraw every 60 seconds
+        dcc.Store(id="scroll-dummy"),                              # clientside scroll target
     ])
 
 
@@ -1277,6 +1278,26 @@ def show_day_detail(click, ticker):
         return _detail_hint("Click a point on the SENTIMENT line (top panel) to see its headlines.")
     day = pd.to_datetime(pt["x"]).date()
     return build_day_detail(ticker, day)
+
+
+# Clicking a sentiment point -> smoothly scroll the page to the headlines panel below.
+app.clientside_callback(
+    """
+    function(clickData) {
+        if (clickData && clickData.points && clickData.points.length &&
+            clickData.points[0].curveNumber === 0) {     // only the sentiment line
+            setTimeout(function() {
+                var el = document.getElementById('sentiment-detail');
+                if (el) { el.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+            }, 250);                                       // let the panel render first
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("scroll-dummy", "data"),
+    Input("combined-graph", "clickData"),
+    prevent_initial_call=True,
+)
 
 
 @app.callback(Output("ticker-trigger", "children"), Input("ticker-dropdown", "value"))
