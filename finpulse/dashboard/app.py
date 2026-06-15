@@ -844,11 +844,11 @@ def sectors_page():
         html.Div(cards, style={"display": "grid",
                                "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
                                "gap": "14px", "marginTop": "12px"}),
-        # Sector performance: price %-change AND news-sentiment trend, sharing one set of controls.
+        # Sector performance comparison (% change over time) — pick any combination of sectors.
         html.Div([
-            html.Div("Sector Performance", style={"fontSize": "18px", "fontWeight": "800"}),
-            html.P("Compare any sectors' price performance and news-sentiment trend over a window — "
-                   "pick one, two, or all of them.",
+            html.Div("Sector Performance — % change", style={"fontSize": "18px", "fontWeight": "800"}),
+            html.P("Compare the average price performance of any sectors over a window — pick one, "
+                   "two, or all of them. Each line is % change from the window's start.",
                    style={"color": MUTED, "fontSize": "12px", "marginTop": "4px", "marginBottom": "12px"}),
             html.Div([
                 dcc.Dropdown(id="sector-cmp-select", multi=True, clearable=False,
@@ -859,17 +859,9 @@ def sectors_page():
                              options=[{"label": k, "value": k} for k in TIMEFRAMES],
                              value="3 Months", style={"color": "#000", "width": "160px"}),
             ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
-            html.Div("Price — % change from window start", style=_subhead_style(0)),
-            html.Div(id="sector-cmp", style={"marginTop": "6px"}),
-            html.Div("News sentiment trend", style=_subhead_style()),
-            html.Div(id="sector-sentiment", style={"marginTop": "6px"}),
+            html.Div(id="sector-cmp", style={"marginTop": "12px"}),
         ], style={**CARD_STYLE, "flex": "unset", "marginTop": "24px"}),
     ])
-
-
-def _subhead_style(top=18):
-    return {"fontSize": "12px", "fontWeight": "700", "color": MUTED, "marginTop": f"{top}px",
-            "textTransform": "uppercase", "letterSpacing": "0.5px"}
 
 
 # ----------------------------------------------------------------------------- routing
@@ -1207,44 +1199,6 @@ def build_sector_comparison(selected, days):
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
-def build_sector_sentiment_trend(selected, days):
-    """Avg daily NEWS SENTIMENT line per selected sector (equal-weight of the sector's stocks).
-
-    Uses the stored headline sentiment (no yfinance), so it always works even if Yahoo is down.
-    """
-    selected = [s for s in (selected or []) if s in SECTORS]
-    if not selected:
-        return html.Div("Select one or more sectors to compare.",
-                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
-    cutoff = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=max(days, 7))
-    fig = go.Figure()
-    has_data = False
-    for sector in selected:
-        series = []
-        for t in SECTORS[sector]:
-            agg = aggregate_sentiment(t, "1D")
-            agg = agg[agg["count"] > 0]
-            s = agg["mean"][agg.index >= cutoff]
-            if not s.empty:
-                series.append(s)
-        if not series:
-            continue
-        avg = pd.concat(series, axis=1).mean(axis=1)         # equal-weight the sector's stocks
-        if avg.dropna().empty:
-            continue
-        has_data = True
-        fig.add_trace(go.Scatter(x=avg.index, y=avg, mode="lines+markers", name=sector,
-                                 connectgaps=True, line={"color": SECTOR_COLOR[sector], "width": 2}))
-    if not has_data:
-        return html.Div("No sentiment data in this window.",
-                        style={"color": MUTED, "fontSize": "13px", "padding": "16px 0"})
-    fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
-    fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=340,
-                      margin={"t": 30, "l": 50, "r": 20, "b": 36}, yaxis_title="Avg sentiment",
-                      yaxis_range=[-1, 1], legend={"orientation": "h", "y": 1.13, "x": 0})
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
-
-
 # ---- Custom dropdown wiring -------------------------------------------------
 # One callback per selector handles BOTH opening/closing (trigger click) and selecting (option
 # click). Open/close is controlled fully via the panel's style so it can't desync like <details>.
@@ -1324,13 +1278,11 @@ def update_tf_trigger(tf):
 
 @app.callback(
     Output("sector-cmp", "children"),
-    Output("sector-sentiment", "children"),
     Input("sector-cmp-select", "value"),
     Input("sector-cmp-timeframe", "value"),
 )
 def update_sector_cmp(sectors, timeframe):
-    days = TIMEFRAMES.get(timeframe, 30)
-    return build_sector_comparison(sectors, days), build_sector_sentiment_trend(sectors, days)
+    return build_sector_comparison(sectors, TIMEFRAMES.get(timeframe, 30))
 
 
 def _register_custom_select(cid, kind):
