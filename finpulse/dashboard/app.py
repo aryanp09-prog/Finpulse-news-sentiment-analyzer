@@ -840,9 +840,10 @@ def _sector_card(r):
     ], className="ticker-card", style={**CARD_STYLE, "minWidth": "unset"})
 
 
-def sectors_page():
+def build_sector_scatter(days):
+    """Fundamentals (x) x sentiment (y) scatter; dot colour = price trend over `days`."""
     metrics = sector_metrics()
-    perf = sector_performance(list(SECTORS.keys()), 90)     # 3-month trend -> dot colour
+    perf = sector_performance(list(SECTORS.keys()), days)
     pts = [r for r in metrics if r["fundamentals"] is not None]
     fig = go.Figure()
     if pts:
@@ -863,7 +864,7 @@ def sectors_page():
             marker={"size": 26, "color": colors, "line": {"color": "#fff", "width": 1}},
             customdata=trend_hov,
             hovertemplate="<b>%{text}</b><br>Fundamentals %{x:.0f}/100"
-                          "<br>Sentiment %{y:+.2f}<br>3-mo trend: %{customdata}<extra></extra>",
+                          "<br>Sentiment %{y:+.2f}<br>Trend: %{customdata}<extra></extra>",
         ))
     fig.add_vline(x=50, line_dash="dot", line_color=MUTED)
     fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
@@ -878,14 +879,23 @@ def sectors_page():
                       margin={"t": 30, "l": 60, "r": 30, "b": 50}, showlegend=False,
                       xaxis_title="Avg fundamental score (0-100)", yaxis_title="Avg news sentiment",
                       xaxis_range=[0, 100], yaxis_range=[-1, 1])
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"marginBottom": "8px"})
 
-    cards = [_sector_card(r) for r in metrics]
+
+def sectors_page():
+    cards = [_sector_card(r) for r in sector_metrics()]
     return html.Div([
         page_header("Sector Comparison",
                     "Each sector placed by its average fundamentals (x) and news sentiment (y); "
-                    "dot colour shows its 3-month price trend (green = bullish, yellow = sideways, "
-                    "red = bearish). Click a stock chip to drill into its analytics."),
-        dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"marginBottom": "8px"}),
+                    "dot colour shows its price trend over the chosen window (green = bullish, "
+                    "yellow = sideways, red = bearish). Click a stock chip to drill into its analytics."),
+        html.Div([
+            html.Span("Trend window", style={"color": MUTED, "fontSize": "13px", "fontWeight": "700"}),
+            dcc.Dropdown(id="scatter-timeframe", clearable=False,
+                         options=[{"label": k, "value": k} for k in TIMEFRAMES],
+                         value="3 Months", style={"color": "#000", "width": "160px"}),
+        ], style={"display": "flex", "alignItems": "center", "gap": "10px", "marginBottom": "12px"}),
+        html.Div(build_sector_scatter(90), id="sector-scatter"),
         html.Div(cards, style={"display": "grid",
                                "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
                                "gap": "14px", "marginTop": "12px"}),
@@ -1422,6 +1432,11 @@ def update_tf_trigger(tf):
 def update_sector_cmp(sectors, timeframe, trend):
     days = TIMEFRAMES.get(timeframe, 30)
     return build_sector_comparison(sectors, days, trend), build_sector_summary(sectors, days)
+
+
+@app.callback(Output("sector-scatter", "children"), Input("scatter-timeframe", "value"))
+def update_sector_scatter(timeframe):
+    return build_sector_scatter(TIMEFRAMES.get(timeframe, 90))
 
 
 def _register_custom_select(cid, kind):
