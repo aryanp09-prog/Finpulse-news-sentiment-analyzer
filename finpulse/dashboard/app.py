@@ -506,19 +506,26 @@ def build_home_content():
                   "border": f"1px solid {col if active else 'transparent'}"}))
 
     mmi_panel = html.Div([
+        # top: gauge (left) + fear/greed zones stacked vertically (right)
         html.Div([
             dcc.Graph(figure=gauge, config={"displayModeBar": False}, style={"flex": "2"}),
-            html.Div([
-                html.Div("Market Mood Index", style={"fontSize": "14px", "color": MUTED}),
-                html.Div(mood_text, style={"fontSize": "28px", "fontWeight": "800", "color": mood_color}),
-                html.Div(mood_desc, style={"fontSize": "12.5px", "color": TEXT, "marginTop": "6px",
-                                           "lineHeight": "1.5", "maxWidth": "340px"}),
-                html.Div([html.Div(f"{k}: {v:.0f}/100", style={"fontSize": "11px", "color": MUTED})
-                          for k, v in parts.items()], style={"marginTop": "10px"}),
-            ], style={"flex": "1", "display": "flex", "flexDirection": "column", "justifyContent": "center"}),
+            html.Div(zone_guide, style={"flex": "1.2", "display": "flex", "flexDirection": "column",
+                                        "gap": "6px", "justifyContent": "center", "minWidth": "230px"}),
         ], style={"display": "flex", "gap": "20px", "alignItems": "center"}),
-        html.Div(zone_guide, style={"display": "flex", "gap": "8px", "flexWrap": "wrap",
-                                    "marginTop": "16px", "borderTop": f"1px solid {BORDER}", "paddingTop": "14px"}),
+        # below: summary + signal breakdown
+        html.Div([
+            html.Div([
+                html.Span("Market Mood Index — ", style={"fontSize": "14px", "color": MUTED}),
+                html.Span(mood_text, style={"fontSize": "24px", "fontWeight": "800", "color": mood_color}),
+            ]),
+            html.Div(mood_desc, style={"fontSize": "12.5px", "color": TEXT, "marginTop": "6px",
+                                       "lineHeight": "1.5"}),
+            html.Div([html.Div([html.Span(f"{k}  ", style={"color": MUTED}),
+                                html.Span(f"{v:.0f}/100", style={"color": TEXT, "fontWeight": "700"})],
+                               style={"fontSize": "12.5px"})
+                      for k, v in parts.items()],
+                     style={"display": "flex", "gap": "24px", "flexWrap": "wrap", "marginTop": "12px"}),
+        ], style={"marginTop": "16px", "borderTop": f"1px solid {BORDER}", "paddingTop": "14px"}),
     ], style={**CARD_STYLE, "flex": "unset", "marginBottom": "28px"})
 
     return html.Div([
@@ -835,22 +842,38 @@ def _sector_card(r):
 
 def sectors_page():
     metrics = sector_metrics()
+    perf = sector_performance(list(SECTORS.keys()), 90)     # 3-month trend -> dot colour
     pts = [r for r in metrics if r["fundamentals"] is not None]
     fig = go.Figure()
     if pts:
-        colors = [GREEN if r["sentiment"] > 0.05 else RED if r["sentiment"] < -0.05 else AMBER
-                  for r in pts]
+        colors, trend_hov = [], []
+        for r in pts:
+            d = perf.get(r["sector"])
+            if d is not None:
+                label, col = _trend_label(d["pct"])
+                colors.append(col)
+                trend_hov.append(f"{label} ({d['pct']:+.1f}%)")
+            else:
+                colors.append(MUTED)
+                trend_hov.append("n/a")
         fig.add_trace(go.Scatter(
             x=[r["fundamentals"] for r in pts], y=[r["sentiment"] for r in pts],
             mode="markers+text", text=[r["sector"] for r in pts], textposition="top center",
             textfont={"color": TEXT, "size": 12},
             marker={"size": 26, "color": colors, "line": {"color": "#fff", "width": 1}},
-            customdata=[r["headlines"] for r in pts],
-            hovertemplate="<b>%{text}</b><br>Avg fundamentals %{x:.0f}/100"
-                          "<br>Avg sentiment %{y:+.2f}<br>%{customdata} headlines<extra></extra>",
+            customdata=trend_hov,
+            hovertemplate="<b>%{text}</b><br>Fundamentals %{x:.0f}/100"
+                          "<br>Sentiment %{y:+.2f}<br>3-mo trend: %{customdata}<extra></extra>",
         ))
     fig.add_vline(x=50, line_dash="dot", line_color=MUTED)
     fig.add_hline(y=0, line_dash="dot", line_color=MUTED)
+    fig.add_annotation(                                     # colour legend, top-right
+        xref="paper", yref="paper", x=1.0, y=1.0, xanchor="right", yanchor="top", align="left",
+        showarrow=False, font={"size": 12}, bgcolor="rgba(22,27,34,0.85)",
+        bordercolor=BORDER, borderwidth=1, borderpad=6,
+        text=(f"<span style='color:{GREEN}'>● Bullish</span><br>"
+              f"<span style='color:{AMBER}'>● Sideways</span><br>"
+              f"<span style='color:{RED}'>● Bearish</span>"))
     fig.update_layout(template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL, height=440,
                       margin={"t": 30, "l": 60, "r": 30, "b": 50}, showlegend=False,
                       xaxis_title="Avg fundamental score (0-100)", yaxis_title="Avg news sentiment",
@@ -859,9 +882,9 @@ def sectors_page():
     cards = [_sector_card(r) for r in metrics]
     return html.Div([
         page_header("Sector Comparison",
-                    "Each sector placed by its average fundamentals (x) and news sentiment (y). "
-                    "Top-right = strong business + positive news; bottom-left = weak + disliked. "
-                    "Click a stock chip to drill into its analytics."),
+                    "Each sector placed by its average fundamentals (x) and news sentiment (y); "
+                    "dot colour shows its 3-month price trend (green = bullish, yellow = sideways, "
+                    "red = bearish). Click a stock chip to drill into its analytics."),
         dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"marginBottom": "8px"}),
         html.Div(cards, style={"display": "grid",
                                "gridTemplateColumns": "repeat(auto-fill, minmax(265px, 1fr))",
