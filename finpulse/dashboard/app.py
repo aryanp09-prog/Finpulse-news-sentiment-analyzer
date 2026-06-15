@@ -1037,6 +1037,7 @@ def build_news_summary(ticker, ohlc, timeframe):
         ("P/B Ratio", _fmt_num(fraw.get("pb"), "", 2), "Price-to-book ratio."),
         ("Dividend Yield", fraw.get("dividend_yield_display", "NA"), None),
         ("Industry P/E", _fmt_num(fraw.get("industry_pe"), "", 2), "Average P/E across configured peers."),
+        ("Industry P/B", _fmt_num(fraw.get("industry_pb"), "", 2), "Average P/B across configured peers."),
         ("Book Value", _fmt_num(to_inr(fraw.get("book_value"), ticker), "", 2), None),
         ("Debt to Equity", _fmt_num(fraw.get("debt") / 100 if fraw.get("debt") is not None else None, "", 2), None),
         ("Face Value", _fmt_num(fraw.get("face_value"), "", 2), None),
